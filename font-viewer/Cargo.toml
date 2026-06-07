@@ -1,0 +1,10 @@
+[package]
+name = "font-viewer"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+egui = { version = "0.34", default-features = false }
+eframe = { version = "0.34", features = ["glow"] }
+unicode_names2 = "3.1.0"
+ttf-parser = "0.25"
