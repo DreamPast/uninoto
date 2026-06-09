@@ -37,6 +37,31 @@ def cjk_source_rank(path: Path, region: CjkRegion) -> tuple[int, str]:
     return (5, text)
 
 
+def cjk_preference_rank(path: Path, region: CjkRegion = "sc") -> tuple[int, int, str]:
+    text = _norm(path)
+    is_cjk_source = "cjk" in text or any(
+        token in text
+        for token in (
+            "notosanssc",
+            "notoserifsc",
+            "notosanstc",
+            "notoseriftc",
+            "notosanshk",
+            "notoserifhk",
+            "notosansjp",
+            "notoserifjp",
+            "notosanskr",
+            "notoserifkr",
+            "hans",
+            "hant",
+        )
+    )
+    if not is_cjk_source:
+        return (0, 0, text)
+    rank, _ = cjk_source_rank(path, region)
+    return (1, rank, text)
+
+
 def style_rank(path: Path) -> tuple[int, str]:
     name = path.name.lower()
     normalized = _norm(path)
@@ -169,6 +194,8 @@ def source_family_rank(path: Path, category: Category, family: FontFamily) -> in
         for token, rank in priority:
             if token in normalized:
                 return rank
+        if "/noto-cjk/" in normalized:
+            return 8
         if "/notosans/" in normalized:
             return 9
         if is_fallback_source(path):
@@ -208,6 +235,7 @@ def ordered_fonts(
             source_family_rank(f.path, category, family),
             source_freshness_rank(f.path),
             fallback_family_rank(f.path),
+            cjk_preference_rank(f.path, "sc"),
             style_rank(f.path)[0],
             style_rank(f.path)[1],
         ),
