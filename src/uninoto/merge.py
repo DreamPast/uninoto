@@ -414,8 +414,8 @@ def _normalize_font_names(font: TTFont, output: Path) -> None:
         9: "DreamPast",
         10: "Generated from Noto and compatible fallback font sources.",
         11: "https://github.com/notofonts",
-        13: "Source fonts retain their original licenses. Noto fonts are licensed under the SIL Open Font License, Version 1.1.",
-        14: "https://scripts.sil.org/OFL",
+        13: "Source fonts retain their original licenses. See the uninoto repository LICENSE file for the source font license inventory.",
+        14: "https://github.com/DreamPast/uninoto/blob/main/LICENSE",
     }
     name_table = cast(NameTable, font["name"])
     for name_id in list(names):

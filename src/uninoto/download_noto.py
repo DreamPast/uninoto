@@ -44,6 +44,22 @@ class DownloadItem:
 
 FALLBACK_ITEMS: tuple[tuple[str, Path], ...] = (
     (
+        "https://kamichikoichi.github.io/jigmo/Jigmo-20250912.zip",
+        Path("fallback/Jigmo-20250912.zip"),
+    ),
+    (
+        "https://github.com/silnrsi/font-padauk/releases/download/v6.000/Padauk-6.000.zip",
+        Path("fallback/Padauk-6.000.zip"),
+    ),
+    (
+        "https://github.com/silnrsi/font-scheherazade/releases/download/v4.500/ScheherazadeNew-4.500.zip",
+        Path("fallback/ScheherazadeNew-4.500.zip"),
+    ),
+    (
+        "https://github.com/silnrsi/font-harmattan/releases/download/v4.400/Harmattan-4.400.zip",
+        Path("fallback/Harmattan-4.400.zip"),
+    ),
+    (
         "https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip",
         Path("fallback/CascadiaCode-2407.24.zip"),
     ),

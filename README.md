@@ -24,11 +24,12 @@ Output files:
 - `uninoto_mono.ttf` / `uninoto_mono_upper1.ttf` / `uninoto_mono_upper2.ttf`
 - `uninoto_last.ttf`
 
-Coverage as of Unicode 17 (159,563 visible characters total):
+Coverage as of the 2026-06-14 merge against Unicode 17 (159,563 visible
+characters total):
 
-- `sans` (with `last`): 99.63%
-- `serif` (with `last`): 99.63%
-- `mono`: 86.83%
+- `sans` (with `last`): 159,018 / 159,563, 99.656%
+- `serif` (with `last`): 159,018 / 159,563, 99.656%
+- `mono`: 155,120 / 159,563, 97.252%
 
 ## Font Sources
 
@@ -44,7 +45,11 @@ uninoto merges regular/static-weight fonts only (Bold, Oblique, Variable, and ot
 
 | Font | Purpose | License |
 |------|---------|---------|
-| [BabelStone](https://www.babelstone.co.uk/Fonts/) | Various ancient scripts and rare characters | OFL 1.1 |
+| [BabelStone](https://www.babelstone.co.uk/Fonts/) | Various ancient scripts and rare characters | OFL 1.1 / Arphic Public License for BabelStone Han |
+| [Jigmo](https://kamichikoichi.github.io/jigmo/) | Unicode 17 CJK extensions through Extension J | CC0 1.0 |
+| [Padauk](https://software.sil.org/padauk/) | Myanmar script, including Myanmar Extended-C | OFL 1.1 |
+| [Scheherazade New](https://software.sil.org/scheherazade/) | Arabic script supplement | OFL 1.1 |
+| [Harmattan](https://software.sil.org/harmattan/) | Ajami / West African Arabic script supplement | OFL 1.1 |
 | [HanaMin (Hanazono)](https://github.com/cjkvi/HanaMinAFDKO) | CJK Extension B/C ideographs | GlyphWiki / OFL 1.1 |
 | [Scriptwide Sans CJK](https://github.com/scriptwide-fonts/scriptwide-sans-cjk) | Supplementary CJK coverage | OFL 1.1 |
 | [Cascadia Code](https://github.com/microsoft/cascadia-code) | Monospace font supplement | OFL 1.1 |
@@ -56,6 +61,20 @@ uninoto merges regular/static-weight fonts only (Bold, Oblique, Variable, and ot
 | [Fairfax HD](https://www.kreativekorp.com/software/fonts/fairfaxhd/) | UCSUR and scholarly characters | OFL 1.1 |
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | Khitan small script | OFL 1.1 |
 | [Abydos](https://greekfonts.teilar.gr/) | Egyptian Hieroglyphs supplement | Free use |
+
+### Investigated Sources Not Yet Included
+
+The remaining visible gaps are concentrated in recently encoded scripts and
+Tangut-related blocks. Public OFL source repositories exist for some newer Noto
+scripts such as [Gurung Khema](https://github.com/notofonts/gurung-khema) and
+[Ol Onal](https://github.com/notofonts/ol-onal), but they currently do not
+publish regular/static TTF release files. They are not downloaded by default
+until a direct font artifact is available or a source build pipeline is added.
+
+As of the 2026-06-14 audit, the largest remaining `sans`/`serif` gaps are
+Tangut Components Supplement, Garay, Tulu-Tigalari, Tolong Siki, Tai Yo,
+Ol Onal, Gurung Khema, Sidetic, Tangut Supplement, Dives Akuru, Arabic
+Presentation Forms-A, and Syriac Supplement.
 
 ## Building from Source
 
@@ -73,7 +92,10 @@ pypy3 -m pip install -r requirements.txt
 # 2. Download font sources (concurrent download with resume support, 8 threads default)
 pypy3 src/download-noto.py
 
-# 3. Merge fonts
+# Optional: extract already downloaded archives without re-downloading
+pypy3 src/download-noto.py --extract-existing
+
+# 3. Merge fonts and write audit reports
 pypy3 src/merge.py
 ```
 
@@ -93,13 +115,18 @@ The build scripts under `src/` are released under the **MIT License**.
 
 ### Generated Fonts
 
-The merged output fonts (`fonts/merged/uninoto_*.ttf`) are composite/derivative works released under the **SIL Open Font License, Version 1.1**, copyright DreamPast.
+The merged output fonts (`fonts/merged/uninoto_*.ttf`) are composite/derivative
+works built from the source fonts listed in [LICENSE](./LICENSE). Source font
+licenses and notices are retained; generated font metadata points back to this
+repository's license inventory.
 
 ### Source Font Licenses
 
-The complete license texts for all source fonts are included in [LICENSE](./LICENSE):
+License texts, license references, and source notices for the source fonts are included in [LICENSE](./LICENSE):
 
-- **SIL Open Font License 1.1** (Noto families, BabelStone, Charis SIL, Doulos SIL, Junicode, Kanchenjunga, Kedebideri, Fairfax HD, Scriptwide Sans CJK, Cascadia Code, etc.)
+- **SIL Open Font License 1.1** (Noto families, most BabelStone script fonts, Padauk, Scheherazade New, Harmattan, Charis SIL, Doulos SIL, Junicode, Kanchenjunga, Kedebideri, Fairfax HD, Scriptwide Sans CJK, Cascadia Code, etc.)
+- **CC0 1.0 Universal** (Jigmo)
+- **Arphic Public License** (BabelStone Han)
 - **GlyphWiki License** (HanaMinB, HanaMinC)
 - **George Douros free-use notice** (Abydos)
 
