@@ -60,16 +60,16 @@ Output structure:
 | `fonts/merged/<style>/uninoto_last.ttf` | Sans/Serif shared fallback | Contains all last codepoints when they fit; otherwise the first last bucket |
 | `fonts/merged/<style>/uninoto_last<N>.ttf` | Last bucket N | Written as needed when last output exceeds the glyph limit |
 
-Coverage as of the 2026-06-15 merge against Unicode 17 visible non-mark
-characters (157,088 total):
+Coverage as of the 2026-06-15 merge against Unicode 17 visible codepoints
+(159,631 total):
 
 | Style | Sans + last | Sans | Serif + last | Serif | Mono |
 |-------|-------------|------|--------------|-------|------|
-| `full` | 156,539 (99.651%) | 152,703 (97.209%) | 156,539 (99.651%) | 143,723 (91.492%) | 152,703 (97.209%) |
-| `regular` | 79,004 (50.293%) | 71,214 (45.334%) | 79,004 (50.293%) | 61,390 (39.080%) | 71,630 (45.599%) |
-| `bold` | 54,574 (34.741%) | 53,934 (34.334%) | 54,574 (34.741%) | 51,155 (32.565%) | 54,196 (34.500%) |
-| `italic` | 2,853 (1.816%) | 2,794 (1.779%) | 2,853 (1.816%) | 2,722 (1.733%) | 2,794 (1.779%) |
-| `bolditalic` | 2,814 (1.791%) | 2,755 (1.754%) | 2,814 (1.791%) | 2,722 (1.733%) | 2,755 (1.754%) |
+| `full` | 159,018 (99.616%) | 155,120 (97.174%) | 159,018 (99.616%) | 145,298 (91.021%) | 155,120 (97.174%) |
+| `regular` | 81,194 (50.864%) | 73,265 (45.896%) | 81,194 (50.864%) | 62,590 (39.209%) | 73,681 (46.157%) |
+| `bold` | 55,787 (34.947%) | 55,046 (34.483%) | 55,787 (34.947%) | 52,114 (32.647%) | 55,308 (34.647%) |
+| `italic` | 3,181 (1.993%) | 3,103 (1.944%) | 3,181 (1.993%) | 3,017 (1.890%) | 3,103 (1.944%) |
+| `bolditalic` | 3,142 (1.968%) | 3,064 (1.919%) | 3,142 (1.968%) | 3,017 (1.890%) | 3,064 (1.919%) |
 
 ## Font sources
 

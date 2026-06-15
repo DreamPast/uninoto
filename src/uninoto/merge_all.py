@@ -71,7 +71,12 @@ def parse_args() -> tuple[Options, int]:
     )
     parser.add_argument("--missing-output", default="fonts/reports/missing-visible.csv")
     parser.add_argument("--missing-summary-output")
-    parser.add_argument("--include-marks", action="store_true")
+    parser.add_argument("--include-marks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--exclude-marks",
+        action="store_true",
+        help="Report visible non-mark codepoints instead of all visible codepoints.",
+    )
     parser.add_argument("--derived-age", default="fonts/unicode/DerivedAge.txt")
     parser.add_argument("--unicode-data", default="fonts/unicode/UnicodeData.txt")
     parser.add_argument(
@@ -81,6 +86,8 @@ def parse_args() -> tuple[Options, int]:
         help="Worker process count. Defaults to min(8, CPU count, task count).",
     )
     args = parser.parse_args()
+    if args.include_marks and args.exclude_marks:
+        parser.error("--include-marks and --exclude-marks cannot be used together")
     options = Options(
         input=Path(args.input),
         output=Path(args.output),
@@ -90,7 +97,7 @@ def parse_args() -> tuple[Options, int]:
         missing_summary_output=(
             Path(args.missing_summary_output) if args.missing_summary_output else None
         ),
-        include_marks=bool(args.include_marks),
+        include_marks=not bool(args.exclude_marks),
         derived_age=Path(args.derived_age),
         unicode_data=Path(args.unicode_data),
     )

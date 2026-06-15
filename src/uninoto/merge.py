@@ -1397,6 +1397,14 @@ def write_missing_visible_report_for_fonts(
     covered = collect_merged_coverage(font_paths, codepoint_filter)
     age_ranges = read_age_ranges(options.derived_age)
     category_ranges = read_unicode_data_ranges(options.unicode_data)
+    covered_visible_with_marks = 0
+    covered_visible_nonmark = 0
+    for cp in covered:
+        category = category_for_report(cp, category_ranges)
+        if is_visible_report_codepoint(cp, category, True):
+            covered_visible_with_marks += 1
+        if is_visible_report_codepoint(cp, category, False):
+            covered_visible_nonmark += 1
     missing: list[int] = []
     ranges = (
         [(range_.start, range_.end) for range_ in age_ranges]
@@ -1438,9 +1446,13 @@ def write_missing_visible_report_for_fonts(
     names = ", ".join(
         name for name in (output_font_name(path) for path in font_paths) if name
     )
+    covered_visible = (
+        covered_visible_with_marks if options.include_marks else covered_visible_nonmark
+    )
+    report_scope = "visible codepoints" if options.include_marks else "visible non-mark"
     print(f"{label} coverage fonts: {names}")
-    print(f"{label} covered codepoints: {len(covered)}")
-    print(f"wrote {missing_output} ({len(missing)} missing visible)")
+    print(f"{label} covered {report_scope}: {covered_visible}")
+    print(f"wrote {missing_output} ({len(missing)} missing {report_scope})")
 
 
 def write_missing_visible_report(options: Options, family: FontFamily) -> None:
@@ -1829,10 +1841,17 @@ def parse_args() -> Options:
     )
     parser.add_argument("--missing-output", default="fonts/reports/missing-visible.csv")
     parser.add_argument("--missing-summary-output")
-    parser.add_argument("--include-marks", action="store_true")
+    parser.add_argument("--include-marks", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--exclude-marks",
+        action="store_true",
+        help="Report visible non-mark codepoints instead of all visible codepoints.",
+    )
     parser.add_argument("--derived-age", default="fonts/unicode/DerivedAge.txt")
     parser.add_argument("--unicode-data", default="fonts/unicode/UnicodeData.txt")
     args = parser.parse_args()
+    if args.include_marks and args.exclude_marks:
+        parser.error("--include-marks and --exclude-marks cannot be used together")
     styles = (
         FONT_STYLES
         if args.style == "all"
@@ -1847,7 +1866,7 @@ def parse_args() -> Options:
         missing_summary_output=(
             Path(args.missing_summary_output) if args.missing_summary_output else None
         ),
-        include_marks=bool(args.include_marks),
+        include_marks=not bool(args.exclude_marks),
         derived_age=Path(args.derived_age),
         unicode_data=Path(args.unicode_data),
     )
