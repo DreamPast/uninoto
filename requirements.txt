@@ -1,2 +1,2 @@
 fonttools>=4.56.0
-black>=26.5.0
+black==25.1.0

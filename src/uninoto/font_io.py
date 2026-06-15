@@ -3,12 +3,15 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from fontTools.ttLib import TTFont
 
+from .planes import FontStyle
 from .unicode_utils import is_mergeable_codepoint
 
 LEGACY_NOTO_SOURCE_SEGMENTS = ("/noto-fonts/", "/noto-cjkext/", "/noto-extra/")
+SourceStyle = Literal["regular", "bold", "italic", "bolditalic", "unknown", "other"]
 
 
 @dataclass(frozen=True)
@@ -46,12 +49,27 @@ def _is_babelstone_static_ttf(basename: str) -> bool:
     return not any(token in basename for token in blocked)
 
 
-def is_regular_static_source_font(path: Path) -> bool:
+def is_variable_font(path: Path) -> bool:
+    normalized = _norm(path)
+    basename = path.name.lower()
+    return (
+        "[" in basename
+        or "]" in basename
+        or "-vf" in basename
+        or "/variable/" in normalized
+        or "ttf-vf" in normalized
+        or "otf-vf" in normalized
+    )
+
+
+def is_static_source_font(path: Path) -> bool:
     normalized = _norm(path)
     basename = path.name.lower()
     if any(segment in normalized for segment in LEGACY_NOTO_SOURCE_SEGMENTS):
         return False
     if "/extracted/" in normalized:
+        return False
+    if is_variable_font(path):
         return False
     if "/noto-emoji/" in normalized:
         return basename in {
@@ -91,18 +109,42 @@ def is_regular_static_source_font(path: Path) -> bool:
         }
     if not (basename.endswith(".ttf") or basename.endswith(".otf")):
         return False
-    if "regular" not in basename:
-        return False
-    if "-italic" in basename or "-oblique" in basename:
-        return False
-    if any(
-        token in basename
-        for token in ("bold", "black", "medium", "light", "thin", "[", "]", "-vf")
-    ):
-        return False
-    if "/variable/" in normalized or "ttf-vf" in normalized or "otf-vf" in normalized:
-        return False
     return True
+
+
+def source_style(path: Path) -> SourceStyle:
+    basename = path.name.lower()
+    is_bold = any(
+        token in basename
+        for token in ("bold", "black", "extrabold", "semibold", "demibold")
+    )
+    is_italic = "italic" in basename or "oblique" in basename
+    if is_bold and is_italic:
+        return "bolditalic"
+    if is_bold:
+        return "bold"
+    if is_italic:
+        return "italic"
+    if any(token in basename for token in ("light", "thin", "extralight", "semilight")):
+        return "other"
+    if "medium" in basename:
+        return "other"
+    if "regular" in basename:
+        return "regular"
+    return "unknown"
+
+
+STYLE_FALLBACKS: dict[FontStyle, tuple[SourceStyle, ...]] = {
+    "regular": ("regular",),
+    "bold": ("bold",),
+    "italic": ("italic",),
+    "bolditalic": ("bolditalic",),
+    "full": ("regular", "unknown"),
+}
+
+
+def is_source_font_for_style(path: Path, style: FontStyle) -> bool:
+    return is_static_source_font(path) and source_style(path) in STYLE_FALLBACKS[style]
 
 
 CodepointFilter = Callable[[int], bool]
@@ -126,10 +168,14 @@ def read_font_codepoints(
 
 
 def discover_fonts(
-    root: Path, codepoint_filter: CodepointFilter = is_mergeable_codepoint
+    root: Path,
+    codepoint_filter: CodepointFilter = is_mergeable_codepoint,
+    style: FontStyle = "regular",
 ) -> list[FontInfo]:
     fonts: list[FontInfo] = []
-    for file in (p for p in list_font_files(root) if is_regular_static_source_font(p)):
+    for file in (
+        p for p in list_font_files(root) if is_source_font_for_style(p, style)
+    ):
         try:
             cmap = read_font_codepoint_map(file, codepoint_filter)
         except Exception as exc:

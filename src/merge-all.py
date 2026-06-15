@@ -1,4 +1,4 @@
-from uninoto.plane_csv import main
+from uninoto.merge_all import main
 
 if __name__ == "__main__":
     main()

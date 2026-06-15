@@ -7,7 +7,7 @@ import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, cast
+from typing import Any, Protocol, cast
 
 from fontTools import subset
 from fontTools.merge import Merger
@@ -19,16 +19,21 @@ from fontTools.ttLib.tables._g_l_y_f import Glyph
 
 from .font_io import FontInfo, discover_fonts, list_font_files, read_font_codepoints
 from .planes import (
-    DEFAULT_CATEGORIES,
     FONT_FAMILIES,
+    FONT_STYLES,
     LAST_OUTPUT_NAMES,
     LEGACY_LAST_OUTPUT_NAMES,
+    MAX_RECOGNIZED_BMP_OUTPUTS,
+    MAX_RECOGNIZED_SPLIT_OUTPUTS,
+    MAX_RECOGNIZED_UPPER_OUTPUTS,
     Category,
     FontFamily,
+    FontStyle,
     all_output_names,
     codepoint_in_category,
     output_name_for,
     parse_font_family,
+    parse_font_style,
 )
 from .source_selection import ordered_fonts
 from .unicode_utils import (
@@ -40,11 +45,13 @@ from .unicode_utils import (
     general_category,
     in_ranges,
     is_visible_codepoint,
-    unicode_plane_name,
 )
 
-UPPER_BUCKET_CODEPOINT_LIMIT = 60000
+UPPER_BUCKET_CODEPOINT_LIMIT = 50000
 LAST_BUCKET_CODEPOINT_LIMIT = TTF_GLYPH_LIMIT - 1
+PRESERVE_METADATA_CODEPOINT_LIMIT = 8000
+PLACEHOLDER_GLYPHS = {".notdef", ".null", "nonmarkingreturn"}
+LAYOUT_GLYPH_REFERENCE_TABLES = ("BASE", "GDEF", "GPOS", "GSUB", "JSTF")
 PLANE_1_END = 0x1FFFF
 REPORT_FAMILIES: tuple[FontFamily, ...] = ("sans", "serif", "mono")
 MONO_HALF_WIDTH = 600
@@ -62,6 +69,151 @@ WIN_METRICS_BY_FAMILY: dict[FontFamily | None, tuple[int, int]] = {
 }
 USE_TYPO_METRICS = 1 << 7
 CodepointFilter = Callable[[int], bool]
+OutputNameBuilder = Callable[[int, list["SelectedCodepoint"]], str]
+REGION_SPLIT_LABELS = ("sc", "tc", "hk", "jp", "kr")
+
+
+def _is_capacity_error(exc: Exception) -> bool:
+    text = str(exc)
+    return "cannot fit into one TTF" in text or (
+        " wrote " in text and f"limit {TTF_GLYPH_LIMIT}" in text
+    )
+
+
+def _split_selected_by_source(
+    selected: list[SelectedCodepoint],
+) -> tuple[list[SelectedCodepoint], list[SelectedCodepoint]] | None:
+    by_layout_group = _split_selected_by_layout_group(selected)
+    if by_layout_group is not None:
+        return by_layout_group
+    source_order: list[Path] = []
+    source_seen: set[Path] = set()
+    for item in selected:
+        path = item.font.path
+        if path not in source_seen:
+            source_seen.add(path)
+            source_order.append(path)
+    if len(source_order) <= 1:
+        return None
+    left_sources = set(source_order[: len(source_order) // 2])
+    left = [item for item in selected if item.font.path in left_sources]
+    right = [item for item in selected if item.font.path not in left_sources]
+    if not left or not right:
+        return None
+    return left, right
+
+
+def _source_layout_group(path: Path) -> tuple[str, str]:
+    normalized = path.as_posix().lower()
+    name = path.name.lower()
+    cjk_regions = {
+        "sc": ("cjksc", "notosanssc", "notoserifsc", "/sc/", "hans"),
+        "tc": ("cjktc", "notosanstc", "notoseriftc", "/tc/", "hant"),
+        "hk": ("cjkhk", "notosanshk", "notoserifhk", "/hk/"),
+        "jp": ("cjkjp", "notosansjp", "notoserifjp", "/jp/"),
+        "kr": ("cjkkr", "notosanskr", "notoserifkr", "/kr/"),
+    }
+    for region, tokens in cjk_regions.items():
+        if any(token in normalized for token in tokens):
+            return ("cjk", region)
+    if "/fallback/" in normalized:
+        return ("fallback", path.parent.name.lower())
+    parent = path.parent.name.lower()
+    if parent and parent != "ttf":
+        return ("family", parent)
+    return ("font", name)
+
+
+def _simple_region_label(selected: list[SelectedCodepoint]) -> str | None:
+    labels = {
+        group[1]
+        for item in selected
+        for group in [_source_layout_group(item.font.path)]
+        if group[0] == "cjk" and group[1] in REGION_SPLIT_LABELS
+    }
+    groups = {_source_layout_group(item.font.path) for item in selected}
+    return next(iter(labels)) if len(labels) == 1 and len(groups) == 1 else None
+
+
+class SplitOutputNameBuilder:
+    def __init__(self, family: FontFamily) -> None:
+        self.prefix = "uninoto_last" if family == "last" else f"uninoto_{family}"
+        self.region_counts: dict[str, int] = {}
+        self.numeric_index = 0
+
+    def snapshot(self) -> tuple[dict[str, int], int]:
+        return dict(self.region_counts), self.numeric_index
+
+    def restore(self, snapshot: tuple[dict[str, int], int]) -> None:
+        self.region_counts, self.numeric_index = snapshot
+
+    def __call__(self, _index: int, selected: list[SelectedCodepoint]) -> str:
+        region = _simple_region_label(selected)
+        if region:
+            self.region_counts[region] = self.region_counts.get(region, 0) + 1
+            count = self.region_counts[region]
+            suffix = region if count == 1 else f"{region}{count}"
+        else:
+            self.numeric_index += 1
+            suffix = str(self.numeric_index)
+        return f"{self.prefix}_{suffix}.ttf"
+
+
+def make_split_output_name_builder(family: FontFamily) -> SplitOutputNameBuilder:
+    return SplitOutputNameBuilder(family)
+
+
+def _split_selected_by_plane(
+    selected: list[SelectedCodepoint],
+) -> tuple[list[SelectedCodepoint], list[SelectedCodepoint]] | None:
+    bmp = [item for item in selected if item.codepoint <= 0xFFFF]
+    upper = [item for item in selected if item.codepoint > 0xFFFF]
+    if not bmp or not upper:
+        return None
+    return bmp, upper
+
+
+def _split_selected_by_layout_group(
+    selected: list[SelectedCodepoint],
+) -> tuple[list[SelectedCodepoint], list[SelectedCodepoint]] | None:
+    group_order: list[tuple[str, str]] = []
+    group_seen: set[tuple[str, str]] = set()
+    for item in selected:
+        group = _source_layout_group(item.font.path)
+        if group not in group_seen:
+            group_seen.add(group)
+            group_order.append(group)
+    if len(group_order) <= 1:
+        return None
+    left_groups = set(group_order[: len(group_order) // 2])
+    left = [
+        item for item in selected if _source_layout_group(item.font.path) in left_groups
+    ]
+    right = [
+        item
+        for item in selected
+        if _source_layout_group(item.font.path) not in left_groups
+    ]
+    if not left or not right:
+        return None
+    return left, right
+
+
+def _split_selected_for_retry(
+    selected: list[SelectedCodepoint],
+) -> tuple[list[SelectedCodepoint], list[SelectedCodepoint]] | None:
+    by_plane = _split_selected_by_plane(selected)
+    if by_plane is not None:
+        return by_plane
+    by_source = _split_selected_by_source(selected)
+    if by_source is not None:
+        return by_source
+    if len(selected) <= 1:
+        return None
+    midpoint = len(selected) // 2
+    if midpoint <= 0 or midpoint >= len(selected):
+        return None
+    return selected[:midpoint], selected[midpoint:]
 
 
 class SubsetOptionsOverrides(Protocol):
@@ -108,6 +260,15 @@ class HmtxTable(Protocol):
     metrics: dict[str, tuple[int, int]]
 
 
+class CmapSubtable(Protocol):
+    format: int
+    cmap: dict[int, str]
+
+
+class CmapTable(Protocol):
+    tables: list[CmapSubtable]
+
+
 class GlyfTable(Protocol):
     glyphs: dict[str, Glyph]
     glyphOrder: list[str]
@@ -135,30 +296,12 @@ class Options:
     input: Path
     output: Path
     family: FontFamily | None
-    coverage_output: Path
+    styles: tuple[FontStyle, ...]
     missing_output: Path
     missing_summary_output: Path | None
     include_marks: bool
     derived_age: Path
     unicode_data: Path
-
-
-@dataclass(frozen=True)
-class ProvenanceRecord:
-    codepoint: int
-    font_file: str
-    source_font: str
-    note: str = ""
-
-
-@dataclass
-class Segment:
-    start: int
-    end: int
-    plane: str
-    font_file: str
-    source_font: str
-    note: str
 
 
 @dataclass(frozen=True)
@@ -181,12 +324,11 @@ class SelectedCodepoint:
     font: FontInfo
 
 
-def relative_source(file_path: Path) -> str:
-    return (
-        file_path.relative_to(Path.cwd()).as_posix()
-        if file_path.is_relative_to(Path.cwd())
-        else file_path.as_posix()
-    )
+@dataclass(frozen=True)
+class WriteResult:
+    glyphs: int
+    pruned: int
+    preserved_metadata: bool
 
 
 def output_font_name(file_path: Path) -> str | None:
@@ -199,11 +341,30 @@ def report_path_for_family(output: Path, family: FontFamily) -> Path:
     return output.with_name(f"{family}-{output.stem}{suffix}")
 
 
+def output_root_for_style(output: Path, style: FontStyle) -> Path:
+    if output.name in FONT_STYLES:
+        return output if output.name == style else output.parent / style
+    return output / style
+
+
+def report_file_for_style(output: Path, style: FontStyle) -> Path:
+    if output.parent.name in FONT_STYLES:
+        return (
+            output
+            if output.parent.name == style
+            else output.parent.parent / style / output.name
+        )
+    return output.parent / style / output.name
+
+
 def selected_codepoints_for_category(
-    category: Category, fonts: list[FontInfo], family: FontFamily
+    category: Category,
+    fonts: list[FontInfo],
+    family: FontFamily,
+    style: FontStyle,
 ) -> list[SelectedCodepoint]:
     selected: dict[int, FontInfo] = {}
-    for info in ordered_fonts(category, fonts, family):
+    for info in ordered_fonts(category, fonts, family, style):
         for cp in info.codepoints:
             if codepoint_in_category(category, cp) and cp not in selected:
                 selected[cp] = info
@@ -211,44 +372,31 @@ def selected_codepoints_for_category(
 
 
 def selected_upper_codepoints(
-    fonts: list[FontInfo], family: FontFamily
+    fonts: list[FontInfo],
+    family: FontFamily,
+    style: FontStyle,
 ) -> list[SelectedCodepoint]:
     selected: dict[int, FontInfo] = {}
-    for info in ordered_fonts("upper1", fonts, family):
+    for info in ordered_fonts("upper1", fonts, family, style):
         for cp in info.codepoints:
             if 0x10000 <= cp <= PLANE_1_END and cp not in selected:
                 selected[cp] = info
-    for info in ordered_fonts("upper2", fonts, family):
+    for info in ordered_fonts("upper2", fonts, family, style):
         for cp in info.codepoints:
             if cp > PLANE_1_END and cp not in selected:
                 selected[cp] = info
     return [SelectedCodepoint(cp, selected[cp]) for cp in sorted(selected)]
 
 
-def upper_buckets(
-    fonts: list[FontInfo], family: FontFamily
-) -> dict[Category, list[SelectedCodepoint]]:
-    selected = selected_upper_codepoints(fonts, family)
-    upper1 = selected[:UPPER_BUCKET_CODEPOINT_LIMIT]
-    upper2 = selected[UPPER_BUCKET_CODEPOINT_LIMIT : UPPER_BUCKET_CODEPOINT_LIMIT * 2]
-    overflow = len(selected) - len(upper1) - len(upper2)
-    if overflow > 0:
-        raise ValueError(
-            f"upper codepoints require more than two buckets: {len(selected)} codepoints, "
-            f"{UPPER_BUCKET_CODEPOINT_LIMIT * 2} capacity"
-        )
-    return {"upper1": upper1, "upper2": upper2}
-
-
 def selected_output_codepoints(
-    fonts: list[FontInfo], family: FontFamily
+    fonts: list[FontInfo],
+    family: FontFamily,
+    style: FontStyle,
 ) -> list[SelectedCodepoint]:
-    buckets = upper_buckets(fonts, family)
     return sorted(
         [
-            *selected_codepoints_for_category("bmp", fonts, family),
-            *buckets["upper1"],
-            *buckets["upper2"],
+            *selected_codepoints_for_category("bmp", fonts, family, style),
+            *selected_upper_codepoints(fonts, family, style),
         ],
         key=lambda item: item.codepoint,
     )
@@ -310,12 +458,31 @@ def _normalize_mono_widths(font: TTFont) -> None:
         hmtx.metrics[glyph_name] = (target, new_bounds[0] if new_bounds else 0)
 
 
-def _subset_font_to_temp(source: Path, codepoints: list[int], target: Path) -> None:
+def _subset_font_to_temp(
+    source: Path,
+    codepoints: list[int],
+    target: Path,
+    preserve_source_metadata: bool,
+) -> None:
     options = subset.Options()
     dynamic_options = cast(SubsetOptionsOverrides, options)
-    options.hinting = False
-    options.layout_features = []
-    options.drop_tables += ["BASE", "GPOS", "GSUB", "MATH", "vhea", "vmtx", "VORG"]
+    if preserve_source_metadata:
+        options.hinting = True
+        options.drop_tables += ["MATH", "vhea", "vmtx", "VORG"]
+    else:
+        options.hinting = False
+        options.layout_features = []
+        options.drop_tables += [
+            "BASE",
+            "GDEF",
+            "GPOS",
+            "GSUB",
+            "JSTF",
+            "MATH",
+            "vhea",
+            "vmtx",
+            "VORG",
+        ]
     dynamic_options.name_IDs = ["*"]
     options.name_legacy = True
     dynamic_options.name_languages = ["*"]
@@ -395,20 +562,40 @@ def _convert_cff_to_truetype(font: TTFont) -> None:
     cast(MaxpTable, font["maxp"]).recalc(font)
 
 
-def _normalize_font_names(font: TTFont, output: Path) -> None:
+STYLE_NAME: dict[FontStyle, str] = {
+    "regular": "Regular",
+    "bold": "Bold",
+    "italic": "Italic",
+    "bolditalic": "Bold Italic",
+    "full": "Regular",
+}
+
+
+STYLE_POSTSCRIPT_SUFFIX: dict[FontStyle, str] = {
+    "regular": "Regular",
+    "bold": "Bold",
+    "italic": "Italic",
+    "bolditalic": "BoldItalic",
+    "full": "Regular",
+}
+
+
+def _normalize_font_names(font: TTFont, output: Path, style: FontStyle) -> None:
     stem = output.stem.removeprefix("uninoto_")
     family_name = "Uninoto " + " ".join(
         part.capitalize() for part in stem.split("_") if part
     )
     ps_base = "".join(ch for ch in family_name if ch.isalnum())
+    subfamily_name = STYLE_NAME[style]
+    ps_suffix = STYLE_POSTSCRIPT_SUFFIX[style]
     names = {
         0: "Copyright (c) The Uninoto Project Authors.",
         1: family_name,
-        2: "Regular",
-        3: f"1.000;UNIN;{ps_base}-Regular",
-        4: f"{family_name} Regular",
+        2: subfamily_name,
+        3: f"1.000;UNIN;{ps_base}-{ps_suffix}",
+        4: f"{family_name} {subfamily_name}",
         5: "Version 1.000",
-        6: f"{ps_base}-Regular",
+        6: f"{ps_base}-{ps_suffix}",
         7: "Uninoto is a generated font family name.",
         8: "DreamPast",
         9: "DreamPast",
@@ -451,9 +638,111 @@ def _normalize_vertical_metrics(font: TTFont, output: Path) -> None:
     os2.fsSelection |= USE_TYPO_METRICS
 
 
+def _composite_component_closure(font: TTFont, roots: set[str]) -> set[str]:
+    if "glyf" not in font:
+        return set(roots)
+    glyf = cast(GlyfTable, font["glyf"])
+    needed = set(roots)
+    stack = list(roots)
+    while stack:
+        glyph_name = stack.pop()
+        if glyph_name not in glyf.glyphs:
+            continue
+        glyph = glyf[glyph_name]
+        if not glyph.isComposite():
+            continue
+        for component in glyph.components:
+            component_name = component.glyphName
+            if component_name not in needed:
+                needed.add(component_name)
+                stack.append(component_name)
+    return needed
+
+
+def _all_cmap_glyphs(font: TTFont) -> set[str]:
+    if "cmap" not in font:
+        return set()
+    glyphs: set[str] = set()
+    for table in cast(CmapTable, font["cmap"]).tables:
+        glyphs.update(table.cmap.values())
+    return glyphs
+
+
+def _layout_glyphs(font: TTFont) -> set[str]:
+    glyphs: set[str] = set()
+    for tag in LAYOUT_GLYPH_REFERENCE_TABLES:
+        if tag not in font:
+            continue
+        table = cast(Any, font[tag])
+        get_all_glyphs = getattr(table.table, "getAllGlyphs", None)
+        if get_all_glyphs:
+            glyphs.update(get_all_glyphs())
+    return glyphs
+
+
+def _drop_cmap_entries_for_missing_glyphs(font: TTFont, glyph_names: set[str]) -> None:
+    if "cmap" not in font:
+        return
+    cmap_table = cast(CmapTable, font["cmap"])
+    cmap_table.tables = [
+        table for table in cmap_table.tables if getattr(table, "format", None) != 14
+    ]
+    for table in cmap_table.tables:
+        table.cmap = {
+            codepoint: glyph_name
+            for codepoint, glyph_name in table.cmap.items()
+            if glyph_name in glyph_names
+        }
+
+
+def _prune_unencoded_glyphs(font: TTFont, keep_layout_tables: bool) -> int:
+    glyph_order = cast(list[str], font.getGlyphOrder())
+    encoded_glyphs = _all_cmap_glyphs(font)
+    placeholders = set(glyph_order) & PLACEHOLDER_GLYPHS
+    layout_glyphs = _layout_glyphs(font) if keep_layout_tables else set()
+    needed = _composite_component_closure(
+        font, encoded_glyphs | layout_glyphs | placeholders
+    )
+    removable = [glyph_name for glyph_name in glyph_order if glyph_name not in needed]
+    if not removable:
+        return 0
+    if not keep_layout_tables:
+        for tag in LAYOUT_GLYPH_REFERENCE_TABLES:
+            if tag in font:
+                del font[tag]
+    keep = set(glyph_order) - set(removable)
+    new_order = [glyph_name for glyph_name in glyph_order if glyph_name in keep]
+    font.setGlyphOrder(new_order)
+    _drop_cmap_entries_for_missing_glyphs(font, set(new_order))
+    if "glyf" in font:
+        glyf = cast(GlyfTable, font["glyf"])
+        glyf.glyphs = {
+            glyph_name: glyf.glyphs[glyph_name]
+            for glyph_name in new_order
+            if glyph_name in glyf.glyphs
+        }
+        glyf.glyphOrder = list(new_order)
+    for tag in ("hmtx", "vmtx"):
+        if tag in font:
+            metrics_table = cast(HmtxTable, font[tag])
+            metrics = metrics_table.metrics
+            metrics_table.metrics = {
+                glyph_name: metrics[glyph_name]
+                for glyph_name in new_order
+                if glyph_name in metrics
+            }
+    if "maxp" in font:
+        cast(MaxpTable, font["maxp"]).recalc(font)
+    return len(removable)
+
+
 def _write_merged_font(
-    temp_subsets: list[Path], output: Path, normalize_mono_width: bool
-) -> int:
+    temp_subsets: list[Path],
+    output: Path,
+    normalize_mono_width: bool,
+    style: FontStyle,
+    preserve_source_metadata: bool,
+) -> tuple[int, int]:
     output.parent.mkdir(parents=True, exist_ok=True)
     font = (
         TTFont(str(temp_subsets[0]))
@@ -463,19 +752,95 @@ def _write_merged_font(
     try:
         if normalize_mono_width:
             _normalize_mono_widths(font)
-        _normalize_font_names(font, output)
-        _normalize_vertical_metrics(font, output)
-        if "OS/2" in font:
+        _normalize_font_names(font, output, style)
+        if not preserve_source_metadata:
+            _normalize_vertical_metrics(font, output)
+        if "OS/2" in font and not preserve_source_metadata:
             cast(Os2Table, font["OS/2"]).usMaxContext = 0
+        pruned = 0
+        if not preserve_source_metadata:
+            pruned = _prune_unencoded_glyphs(font, keep_layout_tables=False)
+        if preserve_source_metadata:
+            _drop_cmap_entries_for_missing_glyphs(
+                font, set(cast(list[str], font.getGlyphOrder()))
+            )
         glyphs = len(font.getGlyphOrder())
         if glyphs > TTF_GLYPH_LIMIT:
             raise ValueError(
                 f"{output.name} wrote {glyphs} glyphs, limit {TTF_GLYPH_LIMIT}"
             )
         font.save(output)
-        return glyphs
+        return glyphs, pruned
     finally:
         font.close()
+
+
+def _merge_selected_codepoints_once(
+    label: str,
+    output_name: str,
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    normalize_mono_width: bool,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool,
+    allow_stripped_fallback: bool,
+) -> WriteResult | None:
+    estimated = len(selected) + 1
+    if estimated > TTF_GLYPH_LIMIT:
+        raise ValueError(
+            f"{label} cannot fit into one TTF: estimated {estimated} glyph slots, limit {TTF_GLYPH_LIMIT}"
+        )
+    output = output_root / output_name
+    codepoints_by_font: dict[Path, list[int]] = {}
+    for item in selected:
+        codepoints_by_font.setdefault(item.font.path, []).append(item.codepoint)
+    if not codepoints_by_font:
+        print(f"skip {label}: no cmap entries")
+        return None
+    with tempfile.TemporaryDirectory(prefix="uninoto-") as temp:
+        temp_root = Path(temp)
+
+        def build_subsets(preserve_metadata: bool) -> list[Path]:
+            suffix = "preserve" if preserve_metadata else "stripped"
+            temp_subsets: list[Path] = []
+            for index, (font_path, codepoints) in enumerate(codepoints_by_font.items()):
+                unique = sorted(set(codepoints))
+                target = temp_root / f"subset-{suffix}-{index}.ttf"
+                _subset_font_to_temp(font_path, unique, target, preserve_metadata)
+                temp_subsets.append(target)
+            return temp_subsets
+
+        try:
+            glyphs, pruned = _write_merged_font(
+                build_subsets(preserve_source_metadata),
+                output,
+                normalize_mono_width,
+                style,
+                preserve_source_metadata,
+            )
+        except Exception as exc:
+            if not preserve_source_metadata or not allow_stripped_fallback:
+                raise
+            print(
+                f"{label} could not preserve source metadata; retrying stripped output ({exc})"
+            )
+            glyphs, pruned = _write_merged_font(
+                build_subsets(False),
+                output,
+                normalize_mono_width,
+                style,
+                False,
+            )
+    actual = read_font_codepoints(output, codepoint_filter)
+    print(
+        f"wrote {output} ({glyphs} glyphs, {len(actual)}/{len(selected)} codepoints, {len(codepoints_by_font)} subsets, pruned={pruned})"
+    )
+    return WriteResult(
+        glyphs=glyphs,
+        pruned=pruned,
+        preserved_metadata=preserve_source_metadata and pruned == 0,
+    )
 
 
 def merge_selected_codepoints(
@@ -485,43 +850,174 @@ def merge_selected_codepoints(
     output_root: Path,
     normalize_mono_width: bool,
     codepoint_filter: CodepointFilter,
-) -> list[ProvenanceRecord]:
-    estimated = len(selected) + 1
-    if estimated > TTF_GLYPH_LIMIT:
-        raise ValueError(
-            f"{label} cannot fit into one TTF: estimated {estimated} glyph slots, limit {TTF_GLYPH_LIMIT}"
-        )
-    output = output_root / output_name
-    source_by_codepoint: dict[int, str] = {}
-    codepoints_by_font: dict[Path, list[int]] = {}
-    for item in selected:
-        source_by_codepoint[item.codepoint] = relative_source(item.font.path)
-        codepoints_by_font.setdefault(item.font.path, []).append(item.codepoint)
-    if not codepoints_by_font:
-        print(f"skip {label}: no cmap entries")
-        return []
-    with tempfile.TemporaryDirectory(prefix="uninoto-") as temp:
-        temp_root = Path(temp)
-        temp_subsets: list[Path] = []
-        for index, (font_path, codepoints) in enumerate(codepoints_by_font.items()):
-            unique = sorted(set(codepoints))
-            target = temp_root / f"subset-{index}.ttf"
-            _subset_font_to_temp(font_path, unique, target)
-            temp_subsets.append(target)
-        glyphs = _write_merged_font(temp_subsets, output, normalize_mono_width)
-    actual = read_font_codepoints(output, codepoint_filter)
-    print(
-        f"wrote {output} ({glyphs} glyphs, {len(actual)}/{len(selected)} codepoints, {len(codepoints_by_font)} subsets)"
+    style: FontStyle,
+    preserve_source_metadata: bool | None = None,
+) -> None:
+    preserve_metadata = (
+        style != "full"
+        if preserve_source_metadata is None
+        else preserve_source_metadata and style != "full"
     )
-    return [
-        ProvenanceRecord(
-            cp,
-            output_name,
-            source_by_codepoint.get(cp, ""),
-            "" if cp in source_by_codepoint else "source-not-found",
+    _merge_selected_codepoints_once(
+        label,
+        output_name,
+        selected,
+        output_root,
+        normalize_mono_width,
+        codepoint_filter,
+        style,
+        preserve_metadata,
+        True,
+    )
+
+
+def merge_selected_codepoints_with_split(
+    label: str,
+    output_names: list[str],
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    normalize_mono_width: bool,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+    output_name_builder: OutputNameBuilder | None = None,
+    cleanup_stale: bool = True,
+) -> int:
+    if not selected:
+        print(f"skip {label}: no cmap entries")
+        return 0
+    if style == "full":
+        merge_selected_codepoints(
+            label,
+            output_names[0],
+            selected,
+            output_root,
+            normalize_mono_width,
+            codepoint_filter,
+            style,
         )
-        for cp in sorted(actual)
-    ]
+        return 1
+
+    preserve_metadata = preserve_source_metadata and style != "full"
+    written = 0
+    written_names: list[str] = []
+
+    def write_chunk(
+        chunk: list[SelectedCodepoint], failure_reason: str | None = None
+    ) -> None:
+        nonlocal written
+        if written >= len(output_names):
+            raise ValueError(
+                f"{label} requires more than {len(output_names)} split outputs"
+            )
+        chunk_label = label if written == 0 else f"{label}-{written + 1}"
+        must_split = len(chunk) + 1 > TTF_GLYPH_LIMIT
+        if (
+            preserve_metadata
+            and not must_split
+            and len(chunk) > PRESERVE_METADATA_CODEPOINT_LIMIT
+        ):
+            split = _split_selected_for_retry(chunk)
+            if split is not None:
+                write_chunk(split[0], "preserve metadata chunk limit")
+                write_chunk(split[1], "preserve metadata chunk limit")
+                return
+        name_builder_snapshot = (
+            output_name_builder.snapshot()
+            if isinstance(output_name_builder, SplitOutputNameBuilder)
+            else None
+        )
+        output_name = (
+            output_name_builder(written, chunk)
+            if output_name_builder
+            else output_names[written]
+        )
+        if not must_split and preserve_metadata:
+            try:
+                _merge_selected_codepoints_once(
+                    chunk_label,
+                    output_name,
+                    chunk,
+                    output_root,
+                    normalize_mono_width,
+                    codepoint_filter,
+                    style,
+                    True,
+                    False,
+                )
+                written += 1
+                written_names.append(output_name)
+                return
+            except Exception as exc:
+                failure_reason = str(exc)
+                must_split = _is_capacity_error(exc)
+                if not must_split:
+                    split = _split_selected_by_source(chunk)
+                    if split is not None:
+                        if (
+                            isinstance(output_name_builder, SplitOutputNameBuilder)
+                            and name_builder_snapshot is not None
+                        ):
+                            output_name_builder.restore(name_builder_snapshot)
+                        print(
+                            f"{chunk_label} layout metadata merge failed; splitting source groups ({failure_reason})"
+                        )
+                        write_chunk(split[0], failure_reason)
+                        write_chunk(split[1], failure_reason)
+                        return
+        if must_split:
+            split = _split_selected_for_retry(chunk)
+            if split is not None:
+                if (
+                    isinstance(output_name_builder, SplitOutputNameBuilder)
+                    and name_builder_snapshot is not None
+                ):
+                    output_name_builder.restore(name_builder_snapshot)
+                write_chunk(split[0], failure_reason)
+                write_chunk(split[1], failure_reason)
+                return
+        if len(chunk) <= 1 or not must_split:
+            if preserve_metadata:
+                print(
+                    f"{chunk_label} could not preserve source metadata; retrying stripped output ({failure_reason})"
+                )
+            try:
+                _merge_selected_codepoints_once(
+                    chunk_label,
+                    output_name,
+                    chunk,
+                    output_root,
+                    normalize_mono_width,
+                    codepoint_filter,
+                    style,
+                    False,
+                    False,
+                )
+                written += 1
+                written_names.append(output_name)
+            except Exception as exc:
+                if len(chunk) <= 1 or not _is_capacity_error(exc):
+                    raise
+                split = _split_selected_for_retry(chunk)
+                if split is None:
+                    raise
+                if (
+                    isinstance(output_name_builder, SplitOutputNameBuilder)
+                    and name_builder_snapshot is not None
+                ):
+                    output_name_builder.restore(name_builder_snapshot)
+                write_chunk(split[0], str(exc))
+                write_chunk(split[1], str(exc))
+            return
+        raise ValueError(f"{chunk_label} cannot be split further ({failure_reason})")
+
+    write_chunk(selected)
+    if cleanup_stale:
+        keep = set(written_names)
+        for stale_name in output_names:
+            if stale_name not in keep:
+                (output_root / stale_name).unlink(missing_ok=True)
+    return written
 
 
 def merge_category(
@@ -530,8 +1026,10 @@ def merge_category(
     fonts: list[FontInfo],
     output_root: Path,
     codepoint_filter: CodepointFilter,
-) -> list[ProvenanceRecord]:
-    selected = selected_codepoints_for_category(category, fonts, family)
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> None:
+    selected = selected_codepoints_for_category(category, fonts, family, style)
     return merge_selected_codepoints(
         f"{family}-{category}",
         output_name_for(family, category),
@@ -539,15 +1037,25 @@ def merge_category(
         output_root,
         family == "mono",
         codepoint_filter,
+        style,
+        preserve_source_metadata,
     )
 
 
 def merge_last(
-    fonts: list[FontInfo], output_root: Path, codepoint_filter: CodepointFilter
-) -> list[ProvenanceRecord]:
-    sans = {item.codepoint: item for item in selected_output_codepoints(fonts, "sans")}
+    fonts: list[FontInfo],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> None:
+    sans = {
+        item.codepoint: item
+        for item in selected_output_codepoints(fonts, "sans", style)
+    }
     serif = {
-        item.codepoint: item for item in selected_output_codepoints(fonts, "serif")
+        item.codepoint: item
+        for item in selected_output_codepoints(fonts, "serif", style)
     }
     selected = [item for cp, item in sans.items() if cp not in serif]
     selected.extend(item for cp, item in serif.items() if cp not in sans)
@@ -558,93 +1066,112 @@ def merge_last(
         f"sans/serif coverage check: sans={len(sans)}, serif={len(serif)}, only-sans={only_sans}, only-serif={only_serif}"
     )
     remove_last_output_fonts(output_root)
-    if len(selected) <= LAST_BUCKET_CODEPOINT_LIMIT:
-        return merge_selected_codepoints(
+    preserve_metadata = preserve_source_metadata and style != "full"
+    should_try_single = len(selected) <= LAST_BUCKET_CODEPOINT_LIMIT and not (
+        preserve_metadata
+        and (
+            len(selected) > PRESERVE_METADATA_CODEPOINT_LIMIT
+            or (
+                len(selected) > 1000 and _split_selected_by_source(selected) is not None
+            )
+        )
+    )
+    if should_try_single:
+        try:
+            _merge_selected_codepoints_once(
+                "last",
+                LAST_OUTPUT_NAMES[0],
+                selected,
+                output_root,
+                False,
+                codepoint_filter,
+                style,
+                preserve_metadata,
+                False,
+            )
+            for stale_name in LAST_OUTPUT_NAMES[1:]:
+                (output_root / stale_name).unlink(missing_ok=True)
+            return
+        except Exception as exc:
+            if style == "full":
+                raise
+            if _is_capacity_error(exc):
+                print(
+                    f"last does not fit with source metadata; splitting outputs ({exc})"
+                )
+            elif preserve_metadata:
+                print(
+                    f"last could not preserve source metadata in one output; splitting source groups ({exc})"
+                )
+            else:
+                raise
+    if style != "full":
+        if preserve_metadata:
+            output_names = split_output_names("last")
+            output_name_builder = make_split_output_name_builder("last")
+            bmp = [item for item in selected if item.codepoint <= 0xFFFF]
+            upper = [item for item in selected if item.codepoint > 0xFFFF]
+            merge_selected_codepoints_with_split(
+                "last",
+                output_names,
+                bmp,
+                output_root,
+                False,
+                codepoint_filter,
+                style,
+                preserve_source_metadata,
+                output_name_builder,
+                cleanup_stale=False,
+            )
+            if upper:
+                merge_selected_codepoints_with_split(
+                    "last",
+                    output_names,
+                    upper,
+                    output_root,
+                    False,
+                    codepoint_filter,
+                    style,
+                    preserve_source_metadata,
+                    output_name_builder,
+                    cleanup_stale=False,
+                )
+            return
+        merge_selected_codepoints_with_split(
             "last",
-            LAST_OUTPUT_NAMES[0],
+            list(LAST_OUTPUT_NAMES),
             selected,
             output_root,
             False,
             codepoint_filter,
+            style,
+            preserve_source_metadata,
         )
-    provenance: list[ProvenanceRecord] = []
-    provenance.extend(
-        merge_selected_codepoints(
-            "last1",
-            LAST_OUTPUT_NAMES[1],
-            selected[:LAST_BUCKET_CODEPOINT_LIMIT],
-            output_root,
-            False,
-            codepoint_filter,
-        )
+        return
+    merge_selected_codepoints(
+        "last1",
+        LAST_OUTPUT_NAMES[1],
+        selected[:LAST_BUCKET_CODEPOINT_LIMIT],
+        output_root,
+        False,
+        codepoint_filter,
+        style,
     )
     last2 = selected[LAST_BUCKET_CODEPOINT_LIMIT : LAST_BUCKET_CODEPOINT_LIMIT * 2]
-    provenance.extend(
-        merge_selected_codepoints(
-            "last2",
-            LAST_OUTPUT_NAMES[2],
-            last2,
-            output_root,
-            False,
-            codepoint_filter,
-        )
+    merge_selected_codepoints(
+        "last2",
+        LAST_OUTPUT_NAMES[2],
+        last2,
+        output_root,
+        False,
+        codepoint_filter,
+        style,
     )
     overflow = max(0, len(selected) - LAST_BUCKET_CODEPOINT_LIMIT * 2)
     if overflow:
         print(
             f"warning: last has {len(selected)} codepoints; left {overflow} overflow codepoints"
         )
-    return provenance
-
-
-def write_coverage_csv(records: list[ProvenanceRecord], output: Path) -> None:
-    sorted_records = sorted(
-        records, key=lambda r: (r.codepoint, r.font_file, r.source_font)
-    )
-    segments: list[Segment] = []
-    for record in sorted_records:
-        plane = unicode_plane_name(record.codepoint)
-        last = segments[-1] if segments else None
-        if (
-            last
-            and last.end + 1 == record.codepoint
-            and last.plane == plane
-            and last.font_file == record.font_file
-            and last.source_font == record.source_font
-            and last.note == record.note
-        ):
-            last.end = record.codepoint
-        else:
-            segments.append(
-                Segment(
-                    record.codepoint,
-                    record.codepoint,
-                    plane,
-                    record.font_file,
-                    record.source_font,
-                    record.note,
-                )
-            )
-    output.parent.mkdir(parents=True, exist_ok=True)
-    with output.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv_lib.writer(fh)
-        writer.writerow(["code_range", "plane", "font_file", "source_font", "note"])
-        for segment in segments:
-            code_range = (
-                cp_hex(segment.start)
-                if segment.start == segment.end
-                else f"{cp_hex(segment.start)}..{cp_hex(segment.end)}"
-            )
-            writer.writerow(
-                [
-                    code_range,
-                    segment.plane,
-                    segment.font_file,
-                    segment.source_font,
-                    segment.note,
-                ]
-            )
-    print(f"wrote {output} ({len(segments)} provenance segments)")
 
 
 def parse_age_ranges(text: str) -> list[AgeRange]:
@@ -755,9 +1282,9 @@ def is_visible_report_codepoint(
 
 
 def merged_coverage_fonts(output_root: Path, family: FontFamily) -> list[Path]:
-    family_names = [output_name_for(family, c) for c in DEFAULT_CATEGORIES]
+    family_names = family_output_names(family)
     names = set(
-        [*family_names, *LAST_OUTPUT_NAMES]
+        [*family_names, *last_output_names()]
         if family in {"sans", "serif"}
         else family_names
     )
@@ -781,12 +1308,12 @@ def check_sans_serif_fallback_coverage(
     output_root: Path, codepoint_filter: CodepointFilter
 ) -> None:
     sans_names = {
-        *[output_name_for("sans", c) for c in DEFAULT_CATEGORIES],
-        *LAST_OUTPUT_NAMES,
+        *family_output_names("sans"),
+        *last_output_names(),
     }
     serif_names = {
-        *[output_name_for("serif", c) for c in DEFAULT_CATEGORIES],
-        *LAST_OUTPUT_NAMES,
+        *family_output_names("serif"),
+        *last_output_names(),
     }
     sans = collect_merged_coverage(
         font_files_by_output_names(output_root, sans_names), codepoint_filter
@@ -891,7 +1418,7 @@ def write_missing_visible_report(options: Options, family: FontFamily) -> None:
 
 
 def family_output_fonts(output_root: Path, family: FontFamily) -> list[Path]:
-    names = {output_name_for(family, category) for category in DEFAULT_CATEGORIES}
+    names = set(family_output_names(family))
     return [file for file in list_font_files(output_root) if file.name in names]
 
 
@@ -901,19 +1428,340 @@ def report_path_with_suffix(output: Path, family: FontFamily, suffix: str) -> Pa
 
 
 def remove_last_output_fonts(output_root: Path) -> None:
-    for name in (*LAST_OUTPUT_NAMES, *LEGACY_LAST_OUTPUT_NAMES):
+    for name in (
+        *LAST_OUTPUT_NAMES,
+        *LEGACY_LAST_OUTPUT_NAMES,
+        *split_output_names("last"),
+    ):
         (output_root / name).unlink(missing_ok=True)
 
 
+def last_output_names() -> list[str]:
+    return [*LAST_OUTPUT_NAMES, *split_output_names("last")]
+
+
 def remove_stale_last_reports(options: Options) -> None:
-    outputs = [
-        report_path_for_family(options.coverage_output, "last"),
-        report_path_for_family(options.missing_output, "last"),
-    ]
+    outputs = [report_path_for_family(options.missing_output, "last")]
     if options.missing_summary_output:
         outputs.append(report_path_for_family(options.missing_summary_output, "last"))
     for output in outputs:
         output.unlink(missing_ok=True)
+
+
+def remove_upper_output_fonts(output_root: Path, family: FontFamily) -> None:
+    for name in upper_output_names(family):
+        (output_root / name).unlink(missing_ok=True)
+
+
+def remove_bmp_split_output_fonts(output_root: Path, family: FontFamily) -> None:
+    for name in bmp_output_names(family)[1:]:
+        (output_root / name).unlink(missing_ok=True)
+
+
+def remove_split_output_fonts(output_root: Path, family: FontFamily) -> None:
+    for name in split_output_names(family):
+        (output_root / name).unlink(missing_ok=True)
+
+
+def remove_family_output_fonts(output_root: Path, family: FontFamily) -> None:
+    for name in family_output_names(family):
+        (output_root / name).unlink(missing_ok=True)
+
+
+def bmp_output_names(family: FontFamily) -> list[str]:
+    numbered = [
+        output_name_for(family, f"bmp{index}")
+        for index in range(2, bmp_output_count_limit() + 1)
+    ]
+    return [output_name_for(family, "bmp"), *numbered]
+
+
+def upper_output_names(family: FontFamily) -> list[str]:
+    numbered = [
+        output_name_for(family, f"upper{index}")
+        for index in range(1, upper_output_count_limit() + 1)
+    ]
+    return [output_name_for(family, "upper"), *numbered]
+
+
+def split_output_names(family: FontFamily) -> list[str]:
+    numeric = [
+        output_name_for(family, str(index))
+        for index in range(1, split_output_count_limit() + 1)
+    ]
+    region = [
+        output_name_for(family, region_name) for region_name in REGION_SPLIT_LABELS
+    ]
+    numbered_regions = [
+        output_name_for(family, f"{region_name}{index}")
+        for region_name in REGION_SPLIT_LABELS
+        for index in range(2, split_output_count_limit() + 1)
+    ]
+    return [*numeric, *region, *numbered_regions]
+
+
+def family_output_names(family: FontFamily) -> list[str]:
+    return [
+        *bmp_output_names(family),
+        *upper_output_names(family),
+        *split_output_names(family),
+    ]
+
+
+def bmp_output_count_limit() -> int:
+    return MAX_RECOGNIZED_BMP_OUTPUTS
+
+
+def upper_output_count_limit() -> int:
+    return MAX_RECOGNIZED_UPPER_OUTPUTS
+
+
+def split_output_count_limit() -> int:
+    return MAX_RECOGNIZED_SPLIT_OUTPUTS
+
+
+def try_merge_combined_family_output(
+    family: FontFamily,
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> bool:
+    preserve_metadata = preserve_source_metadata and style != "full"
+    if preserve_metadata and len(selected) > PRESERVE_METADATA_CODEPOINT_LIMIT:
+        print(
+            f"{family}-combined exceeds preserve metadata chunk target; splitting outputs"
+        )
+        return False
+    try:
+        _merge_selected_codepoints_once(
+            f"{family}-combined",
+            output_name_for(family, "bmp"),
+            selected,
+            output_root,
+            family == "mono",
+            codepoint_filter,
+            style,
+            preserve_metadata,
+            False,
+        )
+    except Exception as exc:
+        if not _is_capacity_error(exc):
+            if style == "full":
+                raise
+            if not preserve_metadata:
+                raise
+            print(
+                f"{family}-combined could not preserve source metadata in one output; splitting outputs ({exc})"
+            )
+            return False
+        print(f"{family}-combined does not fit in one TTF; splitting outputs ({exc})")
+        return False
+    remove_bmp_split_output_fonts(output_root, family)
+    remove_upper_output_fonts(output_root, family)
+    remove_split_output_fonts(output_root, family)
+    return True
+
+
+def merge_family_outputs(
+    family: FontFamily,
+    fonts: list[FontInfo],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> None:
+    if family == "last":
+        merge_last(
+            fonts, output_root, codepoint_filter, style, preserve_source_metadata
+        )
+        return
+    bmp = selected_codepoints_for_category("bmp", fonts, family, style)
+    upper = selected_upper_codepoints(fonts, family, style)
+    combined = sorted(
+        [*bmp, *upper],
+        key=lambda item: item.codepoint,
+    )
+    if try_merge_combined_family_output(
+        family,
+        combined,
+        output_root,
+        codepoint_filter,
+        style,
+        preserve_source_metadata,
+    ):
+        return
+    preserve_metadata = preserve_source_metadata and style != "full"
+    if preserve_metadata:
+        remove_family_output_fonts(output_root, family)
+        output_names = split_output_names(family)
+        output_name_builder = make_split_output_name_builder(family)
+        merge_selected_codepoints_with_split(
+            family,
+            output_names,
+            bmp,
+            output_root,
+            family == "mono",
+            codepoint_filter,
+            style,
+            preserve_source_metadata,
+            output_name_builder,
+            cleanup_stale=False,
+        )
+        if upper:
+            merge_selected_codepoints_with_split(
+                family,
+                output_names,
+                upper,
+                output_root,
+                family == "mono",
+                codepoint_filter,
+                style,
+                preserve_source_metadata,
+                output_name_builder,
+                cleanup_stale=False,
+            )
+        return
+    merge_selected_codepoints_with_split(
+        f"{family}-bmp",
+        bmp_output_names(family),
+        bmp,
+        output_root,
+        family == "mono",
+        codepoint_filter,
+        style,
+        preserve_source_metadata,
+    )
+    remove_upper_output_fonts(output_root, family)
+    if not upper:
+        return
+    if try_merge_upper_output(
+        family, upper, output_root, codepoint_filter, style, preserve_source_metadata
+    ):
+        return
+    merge_upper_bucket_outputs(
+        family, upper, output_root, codepoint_filter, style, preserve_source_metadata
+    )
+
+
+def try_merge_upper_output(
+    family: FontFamily,
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> bool:
+    preserve_metadata = preserve_source_metadata and style != "full"
+    if preserve_metadata and len(selected) > PRESERVE_METADATA_CODEPOINT_LIMIT:
+        print(
+            f"{family}-upper exceeds preserve metadata chunk target; splitting outputs"
+        )
+        return False
+    try:
+        _merge_selected_codepoints_once(
+            f"{family}-upper",
+            output_name_for(family, "upper"),
+            selected,
+            output_root,
+            family == "mono",
+            codepoint_filter,
+            style,
+            preserve_metadata,
+            False,
+        )
+    except Exception as exc:
+        if not _is_capacity_error(exc):
+            if style == "full":
+                raise
+            if not preserve_metadata:
+                raise
+            print(
+                f"{family}-upper could not preserve source metadata in one output; splitting outputs ({exc})"
+            )
+            return False
+        print(f"{family}-upper does not fit in one TTF; splitting outputs ({exc})")
+        return False
+    for name in upper_output_names(family)[1:]:
+        (output_root / name).unlink(missing_ok=True)
+    return True
+
+
+def merge_upper_bucket_outputs(
+    family: FontFamily,
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = True,
+) -> None:
+    (output_root / output_name_for(family, "upper")).unlink(missing_ok=True)
+    numbered_names = upper_output_names(family)[1:]
+    if style != "full":
+        merge_selected_codepoints_with_split(
+            f"{family}-upper",
+            numbered_names,
+            selected,
+            output_root,
+            family == "mono",
+            codepoint_filter,
+            style,
+            preserve_source_metadata,
+        )
+        return
+    buckets = [
+        selected[index : index + UPPER_BUCKET_CODEPOINT_LIMIT]
+        for index in range(0, len(selected), UPPER_BUCKET_CODEPOINT_LIMIT)
+    ]
+    limit = len(numbered_names)
+    if len(buckets) > limit:
+        raise ValueError(
+            f"{family} upper codepoints require {len(buckets)} buckets, "
+            f"but only {limit} output names are recognized"
+        )
+    for index, bucket in enumerate(buckets, start=1):
+        merge_selected_codepoints(
+            f"{family}-upper{index}",
+            numbered_names[index - 1],
+            bucket,
+            output_root,
+            family == "mono",
+            codepoint_filter,
+            style,
+        )
+    for stale_index in range(len(buckets) + 1, limit + 1):
+        (output_root / numbered_names[stale_index - 1]).unlink(missing_ok=True)
+
+
+def style_options_for(options: Options, style: FontStyle) -> Options:
+    return Options(
+        input=options.input,
+        output=output_root_for_style(options.output, style),
+        family=options.family,
+        styles=(style,),
+        missing_output=report_file_for_style(options.missing_output, style),
+        missing_summary_output=(
+            report_file_for_style(options.missing_summary_output, style)
+            if options.missing_summary_output
+            else None
+        ),
+        include_marks=options.include_marks,
+        derived_age=options.derived_age,
+        unicode_data=options.unicode_data,
+    )
+
+
+def write_style_reports(
+    options: Options,
+    families: list[FontFamily],
+    codepoint_filter: CodepointFilter,
+) -> None:
+    for family in families:
+        if family in REPORT_FAMILIES:
+            write_missing_visible_report(options, family)
+    if not options.family or options.family == "last":
+        check_sans_serif_fallback_coverage(options.output, codepoint_filter)
 
 
 def parse_args() -> Options:
@@ -922,7 +1770,9 @@ def parse_args() -> Options:
     parser.add_argument("--output", default="fonts/merged")
     parser.add_argument("--family")
     parser.add_argument(
-        "--coverage-output", default="fonts/reports/plane-font-coverage.csv"
+        "--style",
+        default="regular",
+        help="Font style to merge: regular, bold, italic, bolditalic, full, or all.",
     )
     parser.add_argument("--missing-output", default="fonts/reports/missing-visible.csv")
     parser.add_argument("--missing-summary-output")
@@ -930,11 +1780,16 @@ def parse_args() -> Options:
     parser.add_argument("--derived-age", default="fonts/unicode/DerivedAge.txt")
     parser.add_argument("--unicode-data", default="fonts/unicode/UnicodeData.txt")
     args = parser.parse_args()
+    styles = (
+        FONT_STYLES
+        if args.style == "all"
+        else (parse_font_style(args.style, "--style"),)
+    )
     return Options(
         input=Path(args.input),
         output=Path(args.output),
         family=parse_font_family(args.family, "--family") if args.family else None,
-        coverage_output=Path(args.coverage_output),
+        styles=styles,
         missing_output=Path(args.missing_output),
         missing_summary_output=(
             Path(args.missing_summary_output) if args.missing_summary_output else None
@@ -948,51 +1803,25 @@ def parse_args() -> Options:
 def main() -> None:
     options = parse_args()
     codepoint_filter = project_mergeable_codepoint_filter(options.unicode_data)
-    fonts = discover_fonts(options.input, codepoint_filter)
-    if not fonts:
-        raise ValueError(f"no fonts found below {options.input}")
-    print(f"discovered {len(fonts)} fonts")
     families: list[FontFamily] = (
         [options.family] if options.family is not None else list(FONT_FAMILIES)
     )
-    remove_stale_last_reports(options)
-    for family in families:
-        if family == "last":
-            merge_last(fonts, options.output, codepoint_filter)
-            continue
-        provenance: list[ProvenanceRecord] = []
-        provenance.extend(
-            merge_category("bmp", family, fonts, options.output, codepoint_filter)
-        )
-        buckets = upper_buckets(fonts, family)
-        provenance.extend(
-            merge_selected_codepoints(
-                f"{family}-upper1",
-                output_name_for(family, "upper1"),
-                buckets["upper1"],
-                options.output,
-                family == "mono",
+    for style in options.styles:
+        style_options = style_options_for(options, style)
+        fonts = discover_fonts(options.input, codepoint_filter, style)
+        if not fonts:
+            raise ValueError(f"no {style} fonts found below {options.input}")
+        print(f"style {style}: discovered {len(fonts)} candidate fonts")
+        remove_stale_last_reports(style_options)
+        for family in families:
+            merge_family_outputs(
+                family,
+                fonts,
+                style_options.output,
                 codepoint_filter,
+                style,
             )
-        )
-        provenance.extend(
-            merge_selected_codepoints(
-                f"{family}-upper2",
-                output_name_for(family, "upper2"),
-                buckets["upper2"],
-                options.output,
-                family == "mono",
-                codepoint_filter,
-            )
-        )
-        write_coverage_csv(
-            provenance, report_path_for_family(options.coverage_output, family)
-        )
-    for family in families:
-        if family in REPORT_FAMILIES:
-            write_missing_visible_report(options, family)
-    if not options.family or options.family == "last":
-        check_sans_serif_fallback_coverage(options.output, codepoint_filter)
+        write_style_reports(style_options, families, codepoint_filter)
 
 
 if __name__ == "__main__":

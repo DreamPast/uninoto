@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from .font_io import FontInfo
-from .planes import Category, FontFamily
+from .font_io import FontInfo, SourceStyle, source_style
+from .planes import Category, FontFamily, FontStyle
 
 CjkRegion = str
 
@@ -62,22 +62,31 @@ def cjk_preference_rank(path: Path, region: CjkRegion = "sc") -> tuple[int, int,
     return (1, rank, text)
 
 
-def style_rank(path: Path) -> tuple[int, str]:
+STYLE_PREFERENCE: dict[FontStyle, dict[SourceStyle, int]] = {
+    "regular": {"regular": 0},
+    "bold": {"bold": 0},
+    "italic": {"italic": 0},
+    "bolditalic": {"bolditalic": 0},
+    "full": {
+        "regular": 0,
+        "unknown": 5,
+    },
+}
+
+
+def style_rank(path: Path, requested_style: FontStyle = "regular") -> tuple[int, str]:
     name = path.name.lower()
     normalized = _norm(path)
     is_cjk_regional_vf = (
         "/noto-cjk/" in normalized and name.endswith("-vf.ttf") and "mono" not in name
     )
     is_variable = "[" in name or "-vf" in name
-    is_regular = "regular" in name and "italic" not in name
     is_ui = "ui" in name
-    is_bold = "bold" in name or "black" in name
-    is_italic = "italic" in name
-    score = 0 if is_regular else 5 if is_cjk_regional_vf else 10
+    score = STYLE_PREFERENCE[requested_style].get(source_style(path), 50)
+    if is_cjk_regional_vf:
+        score += 5
     score += 1 if is_ui else 0
     score += 4 if is_variable else 0
-    score += 20 if is_bold else 0
-    score += 30 if is_italic else 0
     return (score, normalized)
 
 
@@ -215,7 +224,10 @@ def source_family_rank(path: Path, category: Category, family: FontFamily) -> in
 
 
 def ordered_fonts(
-    category: Category, fonts: list[FontInfo], family: FontFamily = "sans"
+    category: Category,
+    fonts: list[FontInfo],
+    family: FontFamily = "sans",
+    style: FontStyle = "regular",
 ) -> list[FontInfo]:
     eligible = [font for font in fonts if source_family_eligible(font.path, family)]
     if category == "upper2":
@@ -224,7 +236,7 @@ def ordered_fonts(
             key=lambda f: (
                 requested_family_rank(f.path, family),
                 cjk_source_rank(f.path, "sc")[0],
-                style_rank(f.path)[0],
+                style_rank(f.path, style)[0],
                 cjk_source_rank(f.path, "sc")[1],
             ),
         )
@@ -236,7 +248,7 @@ def ordered_fonts(
             source_freshness_rank(f.path),
             fallback_family_rank(f.path),
             cjk_preference_rank(f.path, "sc"),
-            style_rank(f.path)[0],
-            style_rank(f.path)[1],
+            style_rank(f.path, style)[0],
+            style_rank(f.path, style)[1],
         ),
     )

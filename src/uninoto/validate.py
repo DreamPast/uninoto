@@ -12,7 +12,7 @@ from .unicode_utils import cp_hex, general_category
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--fonts-dir", default="fonts/merged")
+    parser.add_argument("--fonts-dir", default="fonts/merged/regular")
     parser.add_argument("--output", default="fonts/validation/invalid-codepoints.csv")
     parser.add_argument("--unicode-data", default="fonts/unicode/UnicodeData.txt")
     parser.add_argument("--all", action="store_true")
