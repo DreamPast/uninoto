@@ -1,65 +1,76 @@
-# uninoto — 通用 Unicode 覆盖字体
+# uninoto：通用 Unicode 覆盖字体
 
 [English](./README.md) | **简体中文**
 
-uninoto 旨在创建一套能够显示绝大部分 Unicode 可见字符的通用字体。本项目主要以Noto作为主字体，结合了其余免费可商用后备字体，实现对绝大部分可见字符的覆盖。
+uninoto 用来生成一组覆盖 Unicode 可见字符的后备字体。它以 Noto 为主来源，再加入其他可再分发的字体来补 Noto 尚未覆盖的部分。
+
+本项目关注的是基础显示覆盖：尽量让缺失字符显示为字形，而不是空白。生成字体不保证复杂连笔、脚本排版、字距调整、hinting 或专业排印质量。如果需要这些能力，建议直接使用下方列出的官方源字体。
+
+uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自己的首选字体，但仍有字符无法显示时，它提供一个基本替补。
 
 ## 字体结果
 
-当前项目有三个族，`sans`（无衬线）、`serif`（衬线）和`mono`（等宽），由Google Noto Fonts合并而来，CJK汉字优先使用**简体中文**字形。
+当前项目输出三个族：`sans`（无衬线）、`serif`（衬线）和`mono`（等宽）。CJK 汉字在可用时优先使用简体中文字形。
 
 输出按样式放在 `fonts/merged/<style>/` 下。默认构建 `regular`，也可以构建
 `bold`、`italic`、`bolditalic` 和 `full`。样式命名不确定的静态字体会归入
 `full`，不会归入 `regular`。
 
-由于单个TTF最多包含65535个glyph，因此每个族可能拆成多个ttf：
+单个 TTF 最多包含 65535 个 glyph，因此每个族可能拆成多个 TTF：
 
 - 如果能放进单个 TTF，无后缀文件会包含该族的全部码点
-- 非 full 的保留排版输出按来源、区域和码点组拆分。可简单概括的 CJK 区域使用 `_sc`、`_tc`、`_jp`、`_kr` 等后缀；其它拆分组使用 `_1`、`_2`、`_3` 等数字后缀
-- `full` 输出使用紧凑的 BMP/upper 拆分：upper 码点能放进一个文件时写成 `_upper`，否则写成 `_upper1`、`_upper2` 等
+- 需要拆分时，无后缀文件覆盖U+0000~U+FFFF
+- 如果 U+FFFF 之后的码点能放进单个额外 TTF，则写成 `_upper`
+- 如果 `_upper` 仍超过 TTF glyph 上限，则继续拆成 `_upper1`、`_upper2`，以此类推
 - 空的拆分分桶会跳过，不写空字体
 
-`uninoto_last.ttf`包含了若干其余免费可商用后备字体，用于补充`sans`和`serif`。
+`uninoto_last.ttf` 包含后备字体中用于补充 `sans` 和 `serif` 的码点。
 
 `mono`族字体经过等宽处理，advance width 为半宽 600 或全宽 1000。
 
-stripped 输出写出前会清理没有 cmap 对应的孤儿 glyph。非 full 的保留排版输出会保留源字体的排版/提示/度量元数据，并可能保留 OpenType 排版表、hinting 或复合字形引用的 no-cmap glyph。
+生成字体写出前会移除 layout 和 hinting 表。没有 cmap 对应的孤儿 glyph 会被清理，`.notdef` 等占位 glyph 以及复合字形需要的组件 glyph 会保留。`.notdef` 会写成可见的 Noto 风格缺字方框，并且不会映射到任何 Unicode 码点。
 
 输出文件结构：
 
 | 路径 | 变体 | 说明 |
 |------|------|------|
-| `fonts/merged/<style>/uninoto_sans.ttf` | Sans base | 能放下时包含 Sans 全部码点 |
-| `fonts/merged/<style>/uninoto_sans_<region>.ttf` | Sans 区域拆分 | 非 full 输出中，区域可概括为 `sc`、`tc`、`jp`、`kr` 等时写入 |
-| `fonts/merged/<style>/uninoto_sans_<N>.ttf` | Sans 数字拆分 | 非 full 输出中，拆分组没有简洁区域名时写入 |
-| `fonts/merged/<style>/uninoto_serif_<region>.ttf` | Serif 区域拆分 | 规则同 Sans |
-| `fonts/merged/<style>/uninoto_mono_<N>.ttf` | Mono 数字拆分 | 规则同 Sans |
-| `fonts/merged/<style>/uninoto_last_<N>.ttf` | Sans/Serif 共享补充拆分 | 非 full last 输出，没有简洁区域名时使用数字 |
-| `fonts/merged/full/uninoto_<family>_upper<N>.ttf` | Full upper 拆分 | `full` 保留紧凑的 BMP/upper 命名 |
+| `fonts/merged/<style>/uninoto_sans.ttf` | Sans base | 能放下时包含 Sans 全部码点，否则包含 BMP |
+| `fonts/merged/<style>/uninoto_sans_upper.ttf` | Sans upper | Sans upper 码点能放进单个额外文件时写入 |
+| `fonts/merged/<style>/uninoto_sans_upper<N>.ttf` | Sans upper N | `_upper` 超出 glyph 上限时按需写入 |
+| `fonts/merged/<style>/uninoto_serif.ttf` | Serif base | 能放下时包含 Serif 全部码点，否则包含 BMP |
+| `fonts/merged/<style>/uninoto_serif_upper.ttf` | Serif upper | Serif upper 码点能放进单个额外文件时写入 |
+| `fonts/merged/<style>/uninoto_serif_upper<N>.ttf` | Serif upper N | `_upper` 超出 glyph 上限时按需写入 |
+| `fonts/merged/<style>/uninoto_mono.ttf` | Mono base | 能放下时包含 Mono 全部码点，否则包含 BMP |
+| `fonts/merged/<style>/uninoto_mono_upper.ttf` | Mono upper | Mono upper 码点能放进单个额外文件时写入 |
+| `fonts/merged/<style>/uninoto_mono_upper<N>.ttf` | Mono upper N | `_upper` 超出 glyph 上限时按需写入 |
+| `fonts/merged/<style>/uninoto_last.ttf` | Sans/Serif 共享补充 | 能放下时包含全部 last 码点，否则包含第一个 last 分桶 |
+| `fonts/merged/<style>/uninoto_last<N>.ttf` | Last N | last 输出超出 glyph 上限时按需写入 |
 
 截至 2026-06-15 的 Unicode 17 合并审计，可见非 Mark 字符共 157088 个，覆盖率如下：
 
 | 样式 | Sans + last | Sans | Serif + last | Serif | Mono |
 |------|-------------|------|--------------|-------|------|
+| `full` | 156539 (99.651%) | 152703 (97.209%) | 156539 (99.651%) | 143723 (91.492%) | 152703 (97.209%) |
 | `regular` | 79004 (50.293%) | 71214 (45.334%) | 79004 (50.293%) | 61390 (39.080%) | 71630 (45.599%) |
 | `bold` | 54574 (34.741%) | 53934 (34.334%) | 54574 (34.741%) | 51155 (32.565%) | 54196 (34.500%) |
 | `italic` | 2853 (1.816%) | 2794 (1.779%) | 2853 (1.816%) | 2722 (1.733%) | 2794 (1.779%) |
 | `bolditalic` | 2814 (1.791%) | 2755 (1.754%) | 2814 (1.791%) | 2722 (1.733%) | 2755 (1.754%) |
-| `full` | 156539 (99.651%) | 152703 (97.209%) | 156539 (99.651%) | 143723 (91.492%) | 152703 (97.209%) |
 
 ## 字体来源
 
-uninoto 按请求样式合并以下来源的静态 TTF/OTF 字体，并排除变量字体。标准样式只接受明确匹配的样式来源：
+uninoto 按样式合并静态 TTF/OTF 字体，并排除变量字体。每个输出样式都会独立构建：
 
-- `regular`：明确标记为 Regular 的静态来源
-- `bold`：Bold / Black / ExtraBold / SemiBold 来源
-- `italic`：Italic / Oblique 来源
-- `bolditalic`：Bold Italic 来源
-- `full`：明确 Regular 加上样式不确定的静态来源，用来尽可能提高 regular 风格覆盖率
+| 样式 | 适用场景 | 样式一致性 |
+|------|----------|------------|
+| `full` | 尽可能覆盖更多可见字符 | 可能出现样式不一致。只要不确定来源能增加覆盖，就会纳入 |
+| `regular` | 默认 regular 后备字体 | 尽量保持 regular 外观，不使用不确定、粗体、斜体或粗斜体来源 |
+| `bold` | 粗体后备文本 | 尽量保持粗体外观，不回退到 regular 或 italic 来源 |
+| `italic` | 斜体后备文本 | 尽量保持斜体或倾斜外观。广覆盖斜体来源较少，所以覆盖率明显较低 |
+| `bolditalic` | 粗斜体后备文本 | 尽量保持粗斜体外观。广覆盖粗斜体来源较少，所以覆盖率明显较低 |
 
-`regular`、`bold`、`italic` 和 `bolditalic` 各自独立合并。标准样式只使用明确匹配的来源，不回退或混入其他样式变体。
+如果覆盖率优先，使用 `full`。如果更重视请求样式的一致性，使用其它样式。
 
-### 主要来源 —— Noto 字体
+### 主要来源：Noto 字体
 
 - [notofonts](https://github.com/notofonts/notofonts.github.io) 
 - [noto-cjk](https://github.com/notofonts/noto-cjk)
@@ -88,7 +99,7 @@ uninoto 按请求样式合并以下来源的静态 TTF/OTF 字体，并排除变
 
 ### 已调查但暂未接入的来源
 
-当前剩余可见缺口主要集中在较新的 Unicode 16/17 文字和 Tangut 相关区块。Noto 已有若干 OFL 源码仓库，例如 [Gurung Khema](https://github.com/notofonts/gurung-khema) 与 [Ol Onal](https://github.com/notofonts/ol-onal)，但目前没有发布 Regular/static TTF 文件或 release asset。因此在出现直接字体产物，或项目加入源码构建流程之前，下载脚本暂不默认接入这些仓库。
+当前剩余可见缺口主要集中在较新的 Unicode 16/17 文字和 Tangut 相关区块。Noto 已有若干 OFL 源码仓库，例如 [Gurung Khema](https://github.com/notofonts/gurung-khema) 与 [Ol Onal](https://github.com/notofonts/ol-onal)，但目前没有发布 Regular/static TTF 文件或 release asset。在出现直接字体产物，或项目加入源码构建流程之前，下载脚本暂不接入这些仓库。
 
 截至 2026-06-14 审计，`sans` / `serif` 中较大的剩余缺口包括 Tangut Components Supplement、Garay、Tulu-Tigalari、Tolong Siki、Tai Yo、Ol Onal、Gurung Khema、Sidetic、Tangut Supplement、Dives Akuru、Arabic Presentation Forms-A 和 Syriac Supplement。
 
@@ -119,7 +130,6 @@ pypy3 src/merge.py --style bold
 pypy3 src/merge.py --style all
 
 # 可选：使用多进程合并所有配置样式和族
-# 默认 4 个 worker，以便在保留排版数据时减少内存/IO 争抢
 pypy3 src/merge-all.py
 ```
 

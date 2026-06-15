@@ -1,7 +1,7 @@
 uninoto License Inventory
 ===========================
 
-Generated on: 2026-06-14
+Generated on: 2026-06-15
 
 This repository builds composite font outputs from third-party font sources.
 The generated font files are derivative/aggregate works of the source fonts
@@ -44,6 +44,46 @@ from the source fonts enumerated below.
 
 The output fonts carry the SIL Open Font License, Version 1.1. The name
 "Uninoto" is not a Reserved Font Name.
+
+
+Current Source Font Inventory
+-------------------------------
+
+The downloader and source-selection rules currently include the following
+font source sets. Entries may be used in one or more style outputs when their
+static file names explicitly match the requested style; uncertain static style
+names are used by `full` only. Variable fonts are rejected.
+
+Primary sources:
+
+  - Noto monthly release TTFs from notofonts/notofonts.github.io,
+    preferring googlefonts/ttf and falling back to hinted/ttf or full/ttf.
+  - Noto CJK Sans/Serif static regional release archives from notofonts/noto-cjk
+    for JP, KR, SC, TC, and HK.
+  - Noto Emoji from googlefonts/noto-emoji and the CTAN monochrome
+    NotoEmoji-Regular.ttf mirror.
+
+Additional fallback sources wired in src/uninoto/download_noto.py and accepted
+by src/uninoto/font_io.py:
+
+  - Jigmo.ttf, Jigmo2.ttf, Jigmo3.ttf
+  - Padauk and Padauk Book
+  - Scheherazade New
+  - Harmattan
+  - Cascadia Code
+  - HanaMinB and HanaMinC
+  - Scriptwide Sans CJK A/B/C
+  - Noto Fangsong KSS Vertical
+  - Kanchenjunga
+  - Junicode
+  - Kedebideri
+  - Charis SIL
+  - Doulos SIL
+  - Abydos
+  - Fairfax HD
+  - BabelStone static script fonts accepted by the source filter, including
+    BabelStone Han and other BabelStone TTF/OTF script fonts that are not PUA,
+    colour/color, vertical, rotated, or inverse variants.
 
 
 ============================================================================
@@ -391,4 +431,3 @@ Abydos font (Abydos.ttf)
     Fonts and documents in this site are free for any use.
 
     George Douros
-

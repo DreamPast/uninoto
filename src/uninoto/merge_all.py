@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import os
-import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,10 +26,10 @@ from .planes import (
 
 
 @dataclass(frozen=True)
-class StyleMergeTask:
+class MergeTask:
     input: Path
     output: Path
-    families: list[FontFamily]
+    family: FontFamily
     style: FontStyle
     unicode_data: Path
 
@@ -41,25 +40,23 @@ def parse_styles(value: str) -> tuple[FontStyle, ...]:
     return (parse_font_style(value, "--style"),)
 
 
-def merge_style_task(task: StyleMergeTask) -> str:
-    started = time.perf_counter()
+def merge_task(task: MergeTask) -> str:
     codepoint_filter = project_mergeable_codepoint_filter(task.unicode_data)
     fonts = discover_fonts(task.input, codepoint_filter, task.style)
     if not fonts:
         raise ValueError(f"no {task.style} fonts found below {task.input}")
-    print(f"style {task.style}: discovered {len(fonts)} candidate fonts")
-    for family in task.families:
-        merge_family_outputs(
-            family,
-            fonts,
-            task.output,
-            codepoint_filter,
-            task.style,
-            True,
-        )
-    elapsed = time.perf_counter() - started
-    family_label = ",".join(task.families)
-    return f"{task.style}/{family_label} in {elapsed:.1f}s"
+    print(
+        f"style {task.style}, family {task.family}: discovered {len(fonts)} candidate fonts"
+    )
+    merge_family_outputs(
+        task.family,
+        fonts,
+        task.output,
+        codepoint_filter,
+        task.style,
+        False,
+    )
+    return f"{task.style}/{task.family}"
 
 
 def parse_args() -> tuple[Options, int]:
@@ -81,7 +78,7 @@ def parse_args() -> tuple[Options, int]:
         "--jobs",
         type=int,
         default=0,
-        help="Worker process count. Defaults to min(4, CPU count, style count).",
+        help="Worker process count. Defaults to min(8, CPU count, task count).",
     )
     args = parser.parse_args()
     options = Options(
@@ -101,7 +98,7 @@ def parse_args() -> tuple[Options, int]:
 
 
 def default_jobs(task_count: int) -> int:
-    return max(1, min(4, os.cpu_count() or 1, task_count))
+    return max(1, min(8, os.cpu_count() or 1, task_count))
 
 
 def main() -> None:
@@ -116,19 +113,20 @@ def main() -> None:
     for item in style_options.values():
         remove_stale_last_reports(item)
     tasks = [
-        StyleMergeTask(
+        MergeTask(
             input=options.input,
             output=style_options[style].output,
-            families=families,
+            family=family,
             style=style,
             unicode_data=options.unicode_data,
         )
         for style in options.styles
+        for family in families
     ]
     jobs = requested_jobs if requested_jobs > 0 else default_jobs(len(tasks))
-    print(f"style merge tasks: {len(tasks)}, worker processes: {jobs}")
+    print(f"merge tasks: {len(tasks)}, worker processes: {jobs}")
     with concurrent.futures.ProcessPoolExecutor(max_workers=jobs) as executor:
-        futures = [executor.submit(merge_style_task, task) for task in tasks]
+        futures = [executor.submit(merge_task, task) for task in tasks]
         for future in concurrent.futures.as_completed(futures):
             print(f"completed {future.result()}")
     for style in options.styles:

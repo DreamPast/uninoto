@@ -1,82 +1,100 @@
-# uninoto — Universal Unicode Coverage Font
+# uninoto: Unicode coverage font
 
 **English** | [简体中文](./README_zh_CN.md)
 
-uninoto aims to create a universal font family capable of displaying the vast majority of visible Unicode characters. Using Google Noto as the primary font family combined with additional free-to-use fallback fonts, it achieves near-complete coverage of visible characters.
+uninoto builds fallback fonts for visible Unicode characters. It starts with
+Google Noto, then adds other redistributable fonts where Noto does not yet have
+coverage.
 
-## Font Outputs
+The goal is basic display coverage: make missing characters show up as glyphs
+instead of blanks. The generated fonts do not promise correct shaping,
+ligatures, script-specific layout, kerning, hinting, or professional typography.
+For that, use the official source fonts listed below.
 
-The project produces three font families: `sans` (sans-serif), `serif`, and `mono` (monospace), derived from Google Noto Fonts. CJK ideographs default to **Simplified Chinese** glyph forms where available.
+Use uninoto as a fallback font. It is meant to fill gaps after an application or
+document has already tried its preferred fonts.
+
+## Font outputs
+
+The build writes three families: `sans`, `serif`, and `mono`. CJK ideographs use
+Simplified Chinese forms where those forms are available.
 
 Outputs are grouped by style under `fonts/merged/<style>/`. The default build
 creates `regular`; additional supported style builds are `bold`, `italic`,
 `bolditalic`, and `full`. Static fonts with uncertain style naming are used by
 `full`, not by `regular`.
 
-Each family may be split across multiple TTF files due to the 65535 glyph limit per TTF:
+Each family may be split across several TTF files because one TTF can contain at
+most 65,535 glyphs:
 
 - Files without a suffix contain all covered codepoints when they fit in one TTF
-- Non-full layout-preserving outputs split by source/region/codepoint groups.
-  Simple CJK regional groups use suffixes such as `_sc`, `_tc`, `_jp`, `_kr`;
-  other split groups use numeric suffixes such as `_1`, `_2`, `_3`
-- `full` outputs use compact BMP/upper splitting: `_upper` when upper-plane
-  codepoints fit in one file, or `_upper1`, `_upper2`, and so on when needed
+- When needed, files without a suffix cover U+0000 through U+FFFF (BMP)
+- If all codepoints above U+FFFF fit in one additional TTF, they are written as `_upper`
+- If `_upper` would exceed the TTF glyph limit, upper-plane codepoints are split as `_upper1`, `_upper2`, and so on
 - Empty split buckets are skipped
 
-`uninoto_last.ttf` contains additional codepoints from fallback fonts that complement both `sans` and `serif`.
+`uninoto_last.ttf` contains codepoints from fallback fonts that fill gaps shared
+by `sans` and `serif`.
 
 The `mono` family uses normalized advance widths: half-width (600) or full-width (1000).
 
-Stripped outputs prune unencoded orphan glyphs before writing. Non-full
-layout-preserving outputs keep source layout/hint/metric metadata and may retain
-no-cmap glyphs referenced by OpenType layout tables, hinting, or composites.
+Generated fonts are stripped of layout and hinting tables before writing.
+Unencoded orphan glyphs are pruned, while placeholders such as `.notdef` and
+glyphs required as composite components are kept. The `.notdef` glyph is written
+as a visible Noto-style fallback box and is not mapped from any Unicode
+codepoint.
 
-Output file structure:
+Output structure:
 
 | Path | Variant | Notes |
 |------|---------|-------|
-| `fonts/merged/<style>/uninoto_sans.ttf` | Sans base | Contains all Sans codepoints when they fit |
-| `fonts/merged/<style>/uninoto_sans_<region>.ttf` | Sans regional split | Non-full output for a simple region such as `sc`, `tc`, `jp`, or `kr` |
-| `fonts/merged/<style>/uninoto_sans_<N>.ttf` | Sans numbered split | Non-full output when a split group has no concise region name |
-| `fonts/merged/<style>/uninoto_serif_<region>.ttf` | Serif regional split | Same naming rule as Sans |
-| `fonts/merged/<style>/uninoto_mono_<N>.ttf` | Mono numbered split | Same naming rule as Sans |
-| `fonts/merged/<style>/uninoto_last_<N>.ttf` | Sans/Serif shared fallback split | Non-full last output, numbered when no concise region applies |
-| `fonts/merged/full/uninoto_<family>_upper<N>.ttf` | Full upper split | `full` keeps compact BMP/upper split naming |
+| `fonts/merged/<style>/uninoto_sans.ttf` | Sans base | Contains all Sans codepoints when they fit; otherwise BMP |
+| `fonts/merged/<style>/uninoto_sans_upper.ttf` | Sans upper | Written when all Sans upper-plane codepoints fit in one extra file |
+| `fonts/merged/<style>/uninoto_sans_upper<N>.ttf` | Sans upper bucket N | Written as needed when `_upper` would exceed the glyph limit |
+| `fonts/merged/<style>/uninoto_serif.ttf` | Serif base | Contains all Serif codepoints when they fit; otherwise BMP |
+| `fonts/merged/<style>/uninoto_serif_upper.ttf` | Serif upper | Written when all Serif upper-plane codepoints fit in one extra file |
+| `fonts/merged/<style>/uninoto_serif_upper<N>.ttf` | Serif upper bucket N | Written as needed when `_upper` would exceed the glyph limit |
+| `fonts/merged/<style>/uninoto_mono.ttf` | Mono base | Contains all Mono codepoints when they fit; otherwise BMP |
+| `fonts/merged/<style>/uninoto_mono_upper.ttf` | Mono upper | Written when all Mono upper-plane codepoints fit in one extra file |
+| `fonts/merged/<style>/uninoto_mono_upper<N>.ttf` | Mono upper bucket N | Written as needed when `_upper` would exceed the glyph limit |
+| `fonts/merged/<style>/uninoto_last.ttf` | Sans/Serif shared fallback | Contains all last codepoints when they fit; otherwise the first last bucket |
+| `fonts/merged/<style>/uninoto_last<N>.ttf` | Last bucket N | Written as needed when last output exceeds the glyph limit |
 
 Coverage as of the 2026-06-15 merge against Unicode 17 visible non-mark
 characters (157,088 total):
 
 | Style | Sans + last | Sans | Serif + last | Serif | Mono |
 |-------|-------------|------|--------------|-------|------|
+| `full` | 156,539 (99.651%) | 152,703 (97.209%) | 156,539 (99.651%) | 143,723 (91.492%) | 152,703 (97.209%) |
 | `regular` | 79,004 (50.293%) | 71,214 (45.334%) | 79,004 (50.293%) | 61,390 (39.080%) | 71,630 (45.599%) |
 | `bold` | 54,574 (34.741%) | 53,934 (34.334%) | 54,574 (34.741%) | 51,155 (32.565%) | 54,196 (34.500%) |
 | `italic` | 2,853 (1.816%) | 2,794 (1.779%) | 2,853 (1.816%) | 2,722 (1.733%) | 2,794 (1.779%) |
 | `bolditalic` | 2,814 (1.791%) | 2,755 (1.754%) | 2,814 (1.791%) | 2,722 (1.733%) | 2,755 (1.754%) |
-| `full` | 156,539 (99.651%) | 152,703 (97.209%) | 156,539 (99.651%) | 143,723 (91.492%) | 152,703 (97.209%) |
 
-## Font Sources
+## Font sources
 
-uninoto merges static TTF/OTF fonts by requested style. Variable fonts are
-excluded. The standard style selectors only accept explicitly matching style
-sources:
+uninoto merges static TTF/OTF fonts by style. Variable fonts are excluded. Each
+style is built on its own:
 
-- `regular`: explicitly regular static sources
-- `bold`: bold/black/extra-bold/semi-bold sources
-- `italic`: italic/oblique sources
-- `bolditalic`: bold italic sources
-- `full`: explicitly regular plus uncertain static sources, for maximum regular-style coverage
+| Style | Intended use | Style consistency |
+|-------|--------------|-------------------|
+| `full` | Maximum coverage for visible characters | May mix visual styles. It includes uncertain sources when they add coverage |
+| `regular` | Default regular fallback | Keeps a regular look where possible. It does not use uncertain, bold, italic, or bold italic sources |
+| `bold` | Bold fallback text | Keeps a bold look where possible. It does not fall back to regular or italic sources |
+| `italic` | Italic fallback text | Keeps an italic or slanted look where possible. Coverage is much lower because broad italic sources are rare |
+| `bolditalic` | Bold italic fallback text | Keeps a bold italic look where possible. Coverage is much lower because broad bold italic sources are rare |
 
-The `regular`, `bold`, `italic`, and `bolditalic` outputs are merged
-independently. Each standard style only uses explicitly matching sources and
-does not fall back to other style variants.
+Use `full` when coverage is more important than visual consistency. Use the
+other styles when matching the requested text style matters more than covering
+every possible character.
 
-### Primary Source — Noto Fonts
+### Primary source: Noto fonts
 
-- [Noto Monthly Build](https://github.com/notofonts/notofonts.github.io) — ordinary Noto family TTFs from the monthly release tag
-- [Noto CJK](https://github.com/notofonts/noto-cjk) — static regional CJK packages (SC/TC/JP/KR/HK)
+- [Noto Monthly Build](https://github.com/notofonts/notofonts.github.io): ordinary Noto family TTFs from the monthly release tag
+- [Noto CJK](https://github.com/notofonts/noto-cjk): static regional CJK packages (SC/TC/JP/KR/HK)
 - [Noto Emoji](https://github.com/googlefonts/noto-emoji)
 
-### Fallback Sources
+### Fallback sources
 
 | Font | Purpose | License |
 |------|---------|---------|
@@ -97,7 +115,7 @@ does not fall back to other style variants.
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | Khitan small script | OFL 1.1 |
 | [Abydos](https://greekfonts.teilar.gr/) | Egyptian Hieroglyphs supplement | Free use |
 
-### Investigated Sources Not Yet Included
+### Investigated sources not included
 
 The remaining visible gaps are concentrated in recently encoded scripts and
 Tangut-related blocks. Public OFL source repositories exist for some newer Noto
@@ -106,12 +124,12 @@ scripts such as [Gurung Khema](https://github.com/notofonts/gurung-khema) and
 publish regular/static TTF release files. They are not downloaded by default
 until a direct font artifact is available or a source build pipeline is added.
 
-As of the 2026-06-14 audit, the largest remaining `sans`/`serif` gaps are
+In the 2026-06-14 audit, the largest remaining `sans`/`serif` gaps were
 Tangut Components Supplement, Garay, Tulu-Tigalari, Tolong Siki, Tai Yo,
 Ol Onal, Gurung Khema, Sidetic, Tangut Supplement, Dives Akuru, Arabic
 Presentation Forms-A, and Syriac Supplement.
 
-## Building from Source
+## Building from source
 
 ### Prerequisites
 
@@ -138,31 +156,30 @@ pypy3 src/merge.py --style bold
 pypy3 src/merge.py --style all
 
 # Optional: merge all configured styles/families with worker processes
-# Defaults to 4 workers to reduce memory/IO contention while preserving layout data
 pypy3 src/merge-all.py
 ```
 
-### Audit Reports
+### Audit reports
 
-After merging, the following reports are written to `fonts/reports/<style>/`:
+After merging, reports are written to `fonts/reports/<style>/`:
 
-- `sans-missing-visible.csv` / `serif-missing-visible.csv` / `mono-missing-visible.csv` — visible codepoints still uncovered after merging
-- `sans-missing-visible-without_last.csv` / `serif-missing-visible-without_last.csv` — missing codepoints excluding `uninoto_last*` coverage
+- `sans-missing-visible.csv` / `serif-missing-visible.csv` / `mono-missing-visible.csv`: visible codepoints still uncovered after merging
+- `sans-missing-visible-without_last.csv` / `serif-missing-visible-without_last.csv`: missing codepoints excluding `uninoto_last*` coverage
 
 ## License
 
-### Build Scripts
+### Build scripts
 
 The build scripts under `src/` are released under the **MIT License**.
 
-### Generated Fonts
+### Generated fonts
 
 The merged output fonts (`fonts/merged/<style>/uninoto_*.ttf`) are composite/derivative
 works built from the source fonts listed in [LICENSE](./LICENSE). Source font
 licenses and notices are retained; generated font metadata points back to this
 repository's license inventory.
 
-### Source Font Licenses
+### Source font licenses
 
 License texts, license references, and source notices for the source fonts are included in [LICENSE](./LICENSE):
 

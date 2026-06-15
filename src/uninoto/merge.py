@@ -23,8 +23,6 @@ from .planes import (
     FONT_STYLES,
     LAST_OUTPUT_NAMES,
     LEGACY_LAST_OUTPUT_NAMES,
-    MAX_RECOGNIZED_BMP_OUTPUTS,
-    MAX_RECOGNIZED_SPLIT_OUTPUTS,
     MAX_RECOGNIZED_UPPER_OUTPUTS,
     Category,
     FontFamily,
@@ -57,6 +55,9 @@ REPORT_FAMILIES: tuple[FontFamily, ...] = ("sans", "serif", "mono")
 MONO_HALF_WIDTH = 600
 MONO_FULL_WIDTH = 1000
 MERGE_UNITS_PER_EM = 1000
+NOTDEF_DEFAULT_WIDTH = 600
+NOTDEF_Y_MIN = -200
+NOTDEF_Y_MAX = 800
 NOTO_ASCENT = 1069
 NOTO_DESCENT = -293
 NOTO_LINE_GAP = 0
@@ -71,6 +72,8 @@ USE_TYPO_METRICS = 1 << 7
 CodepointFilter = Callable[[int], bool]
 OutputNameBuilder = Callable[[int, list["SelectedCodepoint"]], str]
 REGION_SPLIT_LABELS = ("sc", "tc", "hk", "jp", "kr")
+STALE_SPLIT_OUTPUT_LIMIT = 512
+STALE_BMP_SPLIT_OUTPUT_LIMIT = 512
 
 
 def _is_capacity_error(exc: Exception) -> bool:
@@ -474,11 +477,17 @@ def _subset_font_to_temp(
         options.layout_features = []
         options.drop_tables += [
             "BASE",
+            "cvt ",
             "GDEF",
             "GPOS",
             "GSUB",
+            "fpgm",
+            "gasp",
+            "hdmx",
             "JSTF",
             "MATH",
+            "prep",
+            "VDMX",
             "vhea",
             "vmtx",
             "VORG",
@@ -638,6 +647,52 @@ def _normalize_vertical_metrics(font: TTFont, output: Path) -> None:
     os2.fsSelection |= USE_TYPO_METRICS
 
 
+def _notdef_outline_glyph(advance_width: int) -> Glyph:
+    width = max(advance_width, NOTDEF_DEFAULT_WIDTH)
+    margin = max(50, round(width * 0.1))
+    stroke = max(45, round(width * 0.08))
+    x_min = margin
+    x_max = width - margin
+    y_min = NOTDEF_Y_MIN
+    y_max = NOTDEF_Y_MAX
+    inner_x_min = min(x_min + stroke, x_max)
+    inner_x_max = max(x_max - stroke, x_min)
+    inner_y_min = min(y_min + stroke, y_max)
+    inner_y_max = max(y_max - stroke, y_min)
+    pen = TTGlyphPen(None)
+    pen.moveTo((x_min, y_min))
+    pen.lineTo((x_min, y_max))
+    pen.lineTo((x_max, y_max))
+    pen.lineTo((x_max, y_min))
+    pen.closePath()
+    pen.moveTo((inner_x_min, inner_y_min))
+    pen.lineTo((inner_x_max, inner_y_min))
+    pen.lineTo((inner_x_max, inner_y_max))
+    pen.lineTo((inner_x_min, inner_y_max))
+    pen.closePath()
+    return pen.glyph()
+
+
+def _ensure_notdef_outline(font: TTFont) -> None:
+    if "glyf" not in font or "hmtx" not in font:
+        return
+    glyph_order = cast(list[str], font.getGlyphOrder())
+    if ".notdef" not in glyph_order:
+        glyph_order.insert(0, ".notdef")
+        font.setGlyphOrder(glyph_order)
+    elif glyph_order[0] != ".notdef":
+        glyph_order = [".notdef", *(name for name in glyph_order if name != ".notdef")]
+        font.setGlyphOrder(glyph_order)
+    glyf = cast(GlyfTable, font["glyf"])
+    hmtx = cast(HmtxTable, font["hmtx"])
+    advance_width, _lsb = hmtx.metrics.get(".notdef", (NOTDEF_DEFAULT_WIDTH, 0))
+    glyph = _notdef_outline_glyph(advance_width)
+    glyf.glyphs[".notdef"] = glyph
+    glyf.glyphOrder = list(cast(list[str], font.getGlyphOrder()))
+    glyph.recalcBounds(glyf)
+    hmtx.metrics[".notdef"] = (max(advance_width, NOTDEF_DEFAULT_WIDTH), glyph.xMin)
+
+
 def _composite_component_closure(font: TTFont, roots: set[str]) -> set[str]:
     if "glyf" not in font:
         return set(roots)
@@ -755,6 +810,7 @@ def _write_merged_font(
         _normalize_font_names(font, output, style)
         if not preserve_source_metadata:
             _normalize_vertical_metrics(font, output)
+        _ensure_notdef_outline(font)
         if "OS/2" in font and not preserve_source_metadata:
             cast(Os2Table, font["OS/2"]).usMaxContext = 0
         pruned = 0
@@ -854,7 +910,7 @@ def merge_selected_codepoints(
     preserve_source_metadata: bool | None = None,
 ) -> None:
     preserve_metadata = (
-        style != "full"
+        False
         if preserve_source_metadata is None
         else preserve_source_metadata and style != "full"
     )
@@ -879,7 +935,7 @@ def merge_selected_codepoints_with_split(
     normalize_mono_width: bool,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
     output_name_builder: OutputNameBuilder | None = None,
     cleanup_stale: bool = True,
 ) -> int:
@@ -1027,7 +1083,7 @@ def merge_category(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> None:
     selected = selected_codepoints_for_category(category, fonts, family, style)
     return merge_selected_codepoints(
@@ -1047,7 +1103,7 @@ def merge_last(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> None:
     sans = {
         item.codepoint: item
@@ -1437,7 +1493,7 @@ def remove_last_output_fonts(output_root: Path) -> None:
 
 
 def last_output_names() -> list[str]:
-    return [*LAST_OUTPUT_NAMES, *split_output_names("last")]
+    return list(LAST_OUTPUT_NAMES)
 
 
 def remove_stale_last_reports(options: Options) -> None:
@@ -1454,7 +1510,7 @@ def remove_upper_output_fonts(output_root: Path, family: FontFamily) -> None:
 
 
 def remove_bmp_split_output_fonts(output_root: Path, family: FontFamily) -> None:
-    for name in bmp_output_names(family)[1:]:
+    for name in stale_bmp_split_output_names(family):
         (output_root / name).unlink(missing_ok=True)
 
 
@@ -1469,11 +1525,14 @@ def remove_family_output_fonts(output_root: Path, family: FontFamily) -> None:
 
 
 def bmp_output_names(family: FontFamily) -> list[str]:
-    numbered = [
+    return [output_name_for(family, "bmp")]
+
+
+def stale_bmp_split_output_names(family: FontFamily) -> list[str]:
+    return [
         output_name_for(family, f"bmp{index}")
-        for index in range(2, bmp_output_count_limit() + 1)
+        for index in range(2, STALE_BMP_SPLIT_OUTPUT_LIMIT + 1)
     ]
-    return [output_name_for(family, "bmp"), *numbered]
 
 
 def upper_output_names(family: FontFamily) -> list[str]:
@@ -1501,15 +1560,7 @@ def split_output_names(family: FontFamily) -> list[str]:
 
 
 def family_output_names(family: FontFamily) -> list[str]:
-    return [
-        *bmp_output_names(family),
-        *upper_output_names(family),
-        *split_output_names(family),
-    ]
-
-
-def bmp_output_count_limit() -> int:
-    return MAX_RECOGNIZED_BMP_OUTPUTS
+    return [*bmp_output_names(family), *upper_output_names(family)]
 
 
 def upper_output_count_limit() -> int:
@@ -1517,7 +1568,7 @@ def upper_output_count_limit() -> int:
 
 
 def split_output_count_limit() -> int:
-    return MAX_RECOGNIZED_SPLIT_OUTPUTS
+    return STALE_SPLIT_OUTPUT_LIMIT
 
 
 def try_merge_combined_family_output(
@@ -1526,7 +1577,7 @@ def try_merge_combined_family_output(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> bool:
     preserve_metadata = preserve_source_metadata and style != "full"
     if preserve_metadata and len(selected) > PRESERVE_METADATA_CODEPOINT_LIMIT:
@@ -1570,7 +1621,7 @@ def merge_family_outputs(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> None:
     if family == "last":
         merge_last(
@@ -1623,9 +1674,10 @@ def merge_family_outputs(
                 cleanup_stale=False,
             )
         return
-    merge_selected_codepoints_with_split(
+    remove_split_output_fonts(output_root, family)
+    merge_selected_codepoints(
         f"{family}-bmp",
-        bmp_output_names(family),
+        output_name_for(family, "bmp"),
         bmp,
         output_root,
         family == "mono",
@@ -1633,6 +1685,7 @@ def merge_family_outputs(
         style,
         preserve_source_metadata,
     )
+    remove_bmp_split_output_fonts(output_root, family)
     remove_upper_output_fonts(output_root, family)
     if not upper:
         return
@@ -1651,7 +1704,7 @@ def try_merge_upper_output(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> bool:
     preserve_metadata = preserve_source_metadata and style != "full"
     if preserve_metadata and len(selected) > PRESERVE_METADATA_CODEPOINT_LIMIT:
@@ -1694,7 +1747,7 @@ def merge_upper_bucket_outputs(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    preserve_source_metadata: bool = True,
+    preserve_source_metadata: bool = False,
 ) -> None:
     (output_root / output_name_for(family, "upper")).unlink(missing_ok=True)
     numbered_names = upper_output_names(family)[1:]

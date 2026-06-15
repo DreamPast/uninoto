@@ -6,11 +6,8 @@ Category = Literal["bmp", "upper", "upper1", "upper2"]
 FontFamily = Literal["sans", "serif", "mono", "last"]
 FontStyle = Literal["regular", "bold", "italic", "bolditalic", "full"]
 
-MAX_RECOGNIZED_BMP_OUTPUTS = 512
 MAX_RECOGNIZED_UPPER_OUTPUTS = 512
 MAX_RECOGNIZED_LAST_OUTPUTS = 512
-MAX_RECOGNIZED_SPLIT_OUTPUTS = 512
-REGION_SPLIT_LABELS = ("sc", "tc", "hk", "jp", "kr")
 FONT_FAMILIES: tuple[FontFamily, ...] = ("sans", "serif", "mono", "last")
 FONT_STYLES: tuple[FontStyle, ...] = (
     "regular",
@@ -63,35 +60,18 @@ def output_name_for(family: FontFamily, category: str) -> str:
 
 
 def all_output_names() -> list[str]:
-    bmp_categories = [
-        "bmp",
-        *(f"bmp{index}" for index in range(2, MAX_RECOGNIZED_BMP_OUTPUTS + 1)),
-    ]
     upper_categories = [
         "upper",
         *(f"upper{index}" for index in range(1, MAX_RECOGNIZED_UPPER_OUTPUTS + 1)),
     ]
-    split_categories = [
-        *(str(index) for index in range(1, MAX_RECOGNIZED_SPLIT_OUTPUTS + 1)),
-        *REGION_SPLIT_LABELS,
-        *(
-            f"{region}{index}"
-            for region in REGION_SPLIT_LABELS
-            for index in range(2, MAX_RECOGNIZED_SPLIT_OUTPUTS + 1)
-        ),
-    ]
     return [
-        *(output_name_for("sans", c) for c in bmp_categories),
+        output_name_for("sans", "bmp"),
         *(output_name_for("sans", c) for c in upper_categories),
-        *(output_name_for("sans", c) for c in split_categories),
-        *(output_name_for("serif", c) for c in bmp_categories),
+        output_name_for("serif", "bmp"),
         *(output_name_for("serif", c) for c in upper_categories),
-        *(output_name_for("serif", c) for c in split_categories),
-        *(output_name_for("mono", c) for c in bmp_categories),
+        output_name_for("mono", "bmp"),
         *(output_name_for("mono", c) for c in upper_categories),
-        *(output_name_for("mono", c) for c in split_categories),
         *LAST_OUTPUT_NAMES,
-        *(output_name_for("last", c) for c in split_categories),
     ]
 
 

@@ -5,6 +5,17 @@
 - Use the Python scripts in `src/` as the implementation.
 - Run scripts with `pypy3 src/<script>.py`.
 - Prefer `fontTools` APIs for cmap inspection, subsetting, merging, and font writing.
+- Project outputs prioritize broad visible-character fallback coverage over
+  shaping, ligatures, layout, hinting, or typographic quality. Users who need
+  those features should use the official source fonts listed in the README.
+
+## Commit Message Guidelines
+
+- When creating a commit, use the first line as a concise summary.
+- Starting from the second line, explain the purpose and impact of the change.
+  Keep this description at a higher level, such as improved coverage,
+  performance, reliability, or maintainability, instead of listing exactly
+  which code paths were edited.
 
 ## Font Source Policy
 
@@ -17,10 +28,10 @@
   - reject variable fonts: `-VF`, bracket axes such as `[wght]`, and `/Variable/` paths.
 - `regular`, `bold`, `italic`, and `bolditalic` outputs are merged independently. Each standard style only uses explicitly matching sources and must not fall back to or mix in other style variants.
 - Unassigned codepoints and Private Use codepoints must not enter merged fonts and must not be counted in coverage or missing checks.
-- Stripped outputs prune unencoded orphan glyphs before writing. Non-full layout-preserving outputs keep source layout/hint/metric metadata and may retain no-cmap glyphs referenced by OpenType layout tables, hinting, or composites; still remove stale cmap references.
+- Generated fonts strip layout and hinting tables before writing. Remove unencoded orphan glyphs and stale cmap references; keep placeholder glyphs such as `.notdef` and glyphs required as composite components. Write `.notdef` as a visible Noto-style fallback box without mapping it from any Unicode codepoint.
 - `pypy3 src/download-noto.py` uses the latest `notofonts/notofonts.github.io` monthly build as the main Noto source set by downloading that repository tag zip and extracting ordinary Noto family TTF files, preferring `googlefonts/ttf` and falling back to `hinted/ttf` or `full/ttf` when needed; large CJK fonts come from `notofonts/noto-cjk` Sans/Serif static regional archives, and Noto Emoji comes from `googlefonts/noto-emoji`. Source discovery filters to requested static styles and treats uncertain style names as `full`-only sources. Use `--monthly-tag <tag>` only when reproducing a specific month.
 - Extra fallback downloads currently include Jigmo (CC0 1.0), Padauk, Scheherazade New, Harmattan, BabelStone/HanaMin/Scriptwide/Cascadia/Charis/Doulos/Junicode/Kanchenjunga/Kedebideri/Khitan/Abydos and other entries listed in `src/uninoto/download_noto.py`; update `LICENSE`, `README.md`, and `README_zh_CN.md` whenever adding or removing a source.
-- The default merge writes regular outputs under `fonts\merged\regular\`; additional styles use `fonts\merged\bold\`, `fonts\merged\italic\`, `fonts\merged\bolditalic\`, and `fonts\merged\full\`. Each style writes separate sans, serif, mono, and last output families. Non-full layout-preserving outputs are split by source, CJK region, and codepoint group to preserve layout data while reducing unnecessary files: concise CJK region groups use suffixes such as `_sc`, `_tc`, `_jp`, or `_kr`, and groups that cannot be simply summarized use numeric suffixes such as `_1`, `_2`, `_3`. Do not name non-full split outputs by `_bmp` or `_upper`. `full` outputs are stripped/compact and still use the BMP/upper split naming (`_upper`, `_upper1`, `_upper2`, and so on) when needed. Source paths that clearly contain sans go to sans; paths that clearly contain serif/serief go to serif; paths that clearly contain mono go to mono first, then mono uses non-serif sources as fallback with controlled advance widths. Neutral sources are included as sans/serif fallback. Last only contains the sans/serif coverage difference, not codepoints already covered by both.
+- The default merge writes regular outputs under `fonts\merged\regular\`; additional styles use `fonts\merged\bold\`, `fonts\merged\italic\`, `fonts\merged\bolditalic\`, and `fonts\merged\full\`. Each style writes separate sans, serif, mono, and last output families. A sans/serif/mono family is written to the no-suffix file only when all selected codepoints fit within the TTF glyph limit; otherwise the no-suffix file contains BMP codepoints (`<= U+FFFF`). If all upper-plane codepoints fit in one additional TTF, they are written to `_upper`; if `_upper` would exceed the glyph limit, upper-plane codepoints are capacity-packed into `_upper1`, `_upper2`, and so on. Last outputs are written as `uninoto_last.ttf`, or split into `uninoto_last1.ttf`, `uninoto_last2.ttf`, and so on when needed. Source paths that clearly contain sans go to sans; paths that clearly contain serif/serief go to serif; paths that clearly contain mono go to mono first, then mono uses non-serif sources as fallback with controlled advance widths. Neutral sources are included as sans/serif fallback. Last only contains the sans/serif coverage difference, not codepoints already covered by both.
 
 ## Build And Audit Commands
 
@@ -31,7 +42,7 @@
 - `pypy3 src/download-noto.py` supports resume, configurable concurrency, and environment proxy settings.
 - Extract already downloaded Noto CJK, Noto Emoji, and fallback archives: `pypy3 src/download-noto.py --extract-existing`
 - Merge planes: `pypy3 src/merge.py` (`--family sans`, `--family serif`, `--family mono`, or `--family last` limits output to one family)
-- Merge all configured styles and families with worker processes: `pypy3 src/merge-all.py` (default worker cap is 4 to avoid memory/IO contention while preserving layout data; pass `--jobs <n>` to override). `merge-all.py` pre-discovers source fonts once per style and preserves source layout/hint/metric metadata for non-full outputs; when OpenType layout tables cannot be merged together, split source/region/codepoint groups further instead of dropping layout data.
+- Merge all configured styles and families with worker processes: `pypy3 src/merge-all.py` (default worker cap is 8; pass `--jobs <n>` to override). `merge-all.py` runs style/family tasks independently and strips layout/hinting metadata for direct BMP/upper output splitting.
 - `pypy3 src/merge.py` writes style-scoped reports such as `fonts\reports\regular\sans-missing-visible.csv`, `fonts\reports\regular\serif-missing-visible.csv`, and `fonts\reports\regular\mono-missing-visible.csv`. The sans and serif missing reports use the full fallback output set and include shared last output coverage; `sans-missing-visible-without_last.csv` and `serif-missing-visible-without_last.csv` use only the sans/serif outputs without `uninoto_last*`; mono reports only use mono outputs. Last outputs do not get separate reports.
 
 ## CJK Extension B+ And Recent Script Sources
