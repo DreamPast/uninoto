@@ -5,7 +5,10 @@ use std::collections::BTreeMap;
 use eframe::App;
 use egui::{DragValue, RichText, ScrollArea, TextEdit};
 
-use crate::util::{FontFamilyMode, GlyphInfo, build_grid_rows, load_glyph_map, setup_fonts};
+use crate::util::{
+    FontFamilyMode, FontStyleMode, GlyphInfo, LoadedFont, build_grid_rows, load_font_data,
+    load_glyph_map, resolve_font_root, setup_fonts,
+};
 pub(crate) mod util;
 
 #[derive(Clone, Copy, PartialEq)]
@@ -26,6 +29,8 @@ impl DisplayMode {
 }
 
 struct ViewerApp {
+    font_root_text: String,
+    font_style: FontStyleMode,
     font_family: FontFamilyMode,
     display_mode: DisplayMode,
     search: String,
@@ -34,7 +39,8 @@ struct ViewerApp {
     glyph_map: BTreeMap<u32, GlyphInfo>,
     filtered: Vec<u32>,
     grid_rows: Vec<String>,
-    font_data: Vec<(String, &'static [u8])>,
+    font_data: Vec<LoadedFont>,
+    load_error: Option<String>,
     font_scale: f32,
     ui_scale: f32,
     default_zoom: f32,
@@ -45,8 +51,18 @@ struct ViewerApp {
 
 impl ViewerApp {
     fn new(cc: &eframe::CreationContext) -> Self {
+        let font_root_text = "../fonts/merged".to_string();
+        let font_style = FontStyleMode::Full;
         let font_family = FontFamilyMode::Sans;
-        let font_data = font_family.font_data();
+        let font_root = resolve_font_root(&font_root_text);
+        let mut load_error = None;
+        let font_data = match load_font_data(&font_root, font_style, font_family) {
+            Ok(font_data) => font_data,
+            Err(err) => {
+                load_error = Some(err);
+                Vec::new()
+            }
+        };
         if !font_data.is_empty() {
             setup_fonts(&cc.egui_ctx, &font_data);
         }
@@ -54,6 +70,8 @@ impl ViewerApp {
         let filtered: Vec<u32> = glyph_map.keys().copied().collect();
         let grid_rows = build_grid_rows(&filtered);
         Self {
+            font_root_text,
+            font_style,
             font_family,
             display_mode: DisplayMode::List,
             search: String::new(),
@@ -63,6 +81,7 @@ impl ViewerApp {
             filtered,
             grid_rows,
             font_data,
+            load_error,
             font_scale: 16.0,
             ui_scale: cc.egui_ctx.pixels_per_point(),
             default_zoom: cc.egui_ctx.pixels_per_point(),
@@ -73,12 +92,21 @@ impl ViewerApp {
     }
 
     fn begin_reload(&mut self, ctx: &egui::Context) {
-        self.font_data = self.font_family.font_data();
-        if !self.font_data.is_empty() {
-            setup_fonts(ctx, &self.font_data);
+        let font_root = resolve_font_root(&self.font_root_text);
+        match load_font_data(&font_root, self.font_style, self.font_family) {
+            Ok(font_data) => {
+                self.font_data = font_data;
+                self.load_error = None;
+                if !self.font_data.is_empty() {
+                    setup_fonts(ctx, &self.font_data);
+                }
+                self.needs_reload = true;
+                ctx.request_repaint();
+            }
+            Err(err) => {
+                self.load_error = Some(err);
+            }
         }
-        self.needs_reload = true;
-        ctx.request_repaint();
     }
 
     fn finish_reload(&mut self) {
@@ -144,7 +172,11 @@ fn spin_box(
     let resp = ui.add(TextEdit::singleline(text).desired_width(50.0));
     if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
         if let Ok(v) = text.parse::<f32>() {
-            let v = if v.is_nan() { default } else { v.clamp(min, max) };
+            let v = if v.is_nan() {
+                default
+            } else {
+                v.clamp(min, max)
+            };
             *value = v;
             *text = format!("{:.2}", v);
             changed = true;
@@ -173,6 +205,31 @@ impl ViewerApp {
     fn show_top_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::top("top_panel").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
+                ui.label("Font folder:");
+                let folder_resp = ui.add(
+                    TextEdit::singleline(&mut self.font_root_text)
+                        .desired_width((ui.available_width() - 190.0).max(180.0))
+                        .hint_text("../fonts/merged"),
+                );
+                let enter_pressed =
+                    folder_resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let reload_clicked = ui.button("Reload").clicked();
+                let browse_clicked = ui.button("Choose...").clicked();
+                if browse_clicked {
+                    let start_dir = resolve_font_root(&self.font_root_text);
+                    let mut dialog = rfd::FileDialog::new();
+                    if start_dir.is_dir() {
+                        dialog = dialog.set_directory(start_dir);
+                    }
+                    if let Some(path) = dialog.pick_folder() {
+                        self.font_root_text = path.display().to_string();
+                        self.begin_reload(ui.ctx());
+                    }
+                } else if enter_pressed || reload_clicked {
+                    self.begin_reload(ui.ctx());
+                }
+            });
+            ui.horizontal(|ui| {
                 ui.label("Zoom:");
                 if spin_box(
                     ui,
@@ -186,7 +243,16 @@ impl ViewerApp {
                     ui.ctx().set_zoom_factor(self.ui_scale);
                 }
                 ui.label("Size:");
-                ui.add(DragValue::new(&mut self.font_scale).range(6.0..=48.0).speed(0.25));
+                ui.add(
+                    DragValue::new(&mut self.font_scale)
+                        .range(6.0..=48.0)
+                        .speed(0.25),
+                );
+                ui.separator();
+                ui.label("Style:");
+                for mode in &FontStyleMode::ALL {
+                    ui.selectable_value(&mut self.font_style, *mode, mode.label());
+                }
                 ui.separator();
                 ui.label("Family:");
                 for mode in &FontFamilyMode::ALL {
@@ -223,6 +289,10 @@ impl ViewerApp {
                     ))
                     .strong(),
                 );
+                if let Some(err) = &self.load_error {
+                    ui.separator();
+                    ui.colored_label(egui::Color32::RED, err);
+                }
             });
         });
     }
@@ -450,11 +520,12 @@ impl App for ViewerApp {
             self.finish_reload();
         }
 
+        let old_style = self.font_style;
         let old_family = self.font_family;
 
         self.show_top_panel(ui);
 
-        if self.font_family != old_family {
+        if self.font_style != old_style || self.font_family != old_family {
             self.begin_reload(ui.ctx());
         }
 

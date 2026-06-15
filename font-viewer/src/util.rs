@@ -1,57 +1,51 @@
 use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use egui::{FontData, FontDefinitions, FontFamily};
 use unicode_names2::name;
 
-const UNINOTO_LAST: &[u8] = include_bytes!("../../fonts/merged/uninoto_last.ttf");
+pub type LoadedFont = (String, Vec<u8>);
 
-const FONTS_SANS: [(&str, &[u8]); 4] = [
-    (
-        "uninoto_sans",
-        include_bytes!("../../fonts/merged/uninoto_sans.ttf"),
-    ),
-    (
-        "uninoto_sans_upper1",
-        include_bytes!("../../fonts/merged/uninoto_sans_upper1.ttf"),
-    ),
-    (
-        "uninoto_sans_upper2",
-        include_bytes!("../../fonts/merged/uninoto_sans_upper2.ttf"),
-    ),
-    ("uninoto_last", UNINOTO_LAST),
-];
+#[derive(Clone, Copy, PartialEq)]
+pub enum FontStyleMode {
+    Regular,
+    Bold,
+    Italic,
+    BoldItalic,
+    Full,
+}
 
-const FONTS_SERIF: [(&str, &[u8]); 4] = [
-    (
-        "uninoto_serif",
-        include_bytes!("../../fonts/merged/uninoto_serif.ttf"),
-    ),
-    (
-        "uninoto_serif_upper1",
-        include_bytes!("../../fonts/merged/uninoto_serif_upper1.ttf"),
-    ),
-    (
-        "uninoto_serif_upper2",
-        include_bytes!("../../fonts/merged/uninoto_serif_upper2.ttf"),
-    ),
-    ("uninoto_last", UNINOTO_LAST),
-];
+impl FontStyleMode {
+    pub const ALL: [FontStyleMode; 5] = [
+        FontStyleMode::Full,
+        FontStyleMode::Regular,
+        FontStyleMode::Bold,
+        FontStyleMode::Italic,
+        FontStyleMode::BoldItalic,
+    ];
 
-const FONTS_MONO: [(&str, &[u8]); 3] = [
-    (
-        "uninoto_mono",
-        include_bytes!("../../fonts/merged/uninoto_mono.ttf"),
-    ),
-    (
-        "uninoto_mono_upper1",
-        include_bytes!("../../fonts/merged/uninoto_mono_upper1.ttf"),
-    ),
-    (
-        "uninoto_mono_upper2",
-        include_bytes!("../../fonts/merged/uninoto_mono_upper2.ttf"),
-    ),
-];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Regular => "Regular",
+            Self::Bold => "Bold",
+            Self::Italic => "Italic",
+            Self::BoldItalic => "Bold Italic",
+            Self::Full => "Full",
+        }
+    }
+
+    fn folder(self) -> &'static str {
+        match self {
+            Self::Regular => "regular",
+            Self::Bold => "bold",
+            Self::Italic => "italic",
+            Self::BoldItalic => "bolditalic",
+            Self::Full => "full",
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum FontFamilyMode {
@@ -75,20 +69,106 @@ impl FontFamilyMode {
         }
     }
 
-    pub fn font_data(self) -> Vec<(String, &'static [u8])> {
-        let fonts: &[(&str, &[u8])] = match self {
-            Self::Sans => &FONTS_SANS,
-            Self::Serif => &FONTS_SERIF,
-            Self::Mono => &FONTS_MONO,
-        };
-        fonts
-            .iter()
-            .map(|(name, data)| (name.to_string(), *data))
-            .collect()
+    fn prefix(self) -> &'static str {
+        match self {
+            Self::Sans => "uninoto_sans",
+            Self::Serif => "uninoto_serif",
+            Self::Mono => "uninoto_mono",
+        }
     }
 }
 
-pub fn setup_fonts(ctx: &egui::Context, font_data: &[(String, &'static [u8])]) {
+pub fn resolve_font_root(path_text: &str) -> PathBuf {
+    let path = PathBuf::from(path_text.trim());
+    if path.is_absolute() {
+        path
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(path)
+    }
+}
+
+pub fn load_font_data(
+    root: &Path,
+    style: FontStyleMode,
+    family: FontFamilyMode,
+) -> Result<Vec<LoadedFont>, String> {
+    let style_dir = root.join(style.folder());
+    let font_dir = if style_dir.is_dir() {
+        style_dir
+    } else if root.is_dir() {
+        root.to_path_buf()
+    } else {
+        return Err(format!("Font folder not found: {}", root.display()));
+    };
+
+    let mut paths = matching_font_paths(&font_dir, family.prefix())?;
+    if family != FontFamilyMode::Mono {
+        paths.extend(matching_font_paths(&font_dir, "uninoto_last")?);
+    }
+
+    if paths.is_empty() {
+        return Err(format!(
+            "No {} fonts found in {}",
+            family.label(),
+            font_dir.display()
+        ));
+    }
+
+    let mut fonts = Vec::with_capacity(paths.len());
+    for path in paths {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("font")
+            .to_string();
+        let data = fs::read(&path).map_err(|err| format!("{}: {err}", path.display()))?;
+        fonts.push((name, data));
+    }
+    Ok(fonts)
+}
+
+fn matching_font_paths(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>, String> {
+    let entries = fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    let mut paths: Vec<PathBuf> = entries
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let Some(file_name) = path.file_name().and_then(|s| s.to_str()) else {
+                return false;
+            };
+            let Some(ext) = path.extension().and_then(|s| s.to_str()) else {
+                return false;
+            };
+            let file_name = file_name.to_ascii_lowercase();
+            let ext = ext.to_ascii_lowercase();
+            (ext == "ttf" || ext == "otf") && file_name.starts_with(prefix)
+        })
+        .collect();
+    paths.sort_by(|a, b| font_sort_key(a, prefix).cmp(&font_sort_key(b, prefix)));
+    Ok(paths)
+}
+
+fn font_sort_key(path: &Path, prefix: &str) -> (u8, u32, String) {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    if stem == prefix {
+        return (0, 0, stem);
+    }
+    if let Some(suffix) = stem.strip_prefix(&format!("{prefix}_upper")) {
+        let index = suffix.parse::<u32>().unwrap_or(0);
+        return (1, index, stem);
+    }
+    if let Some(suffix) = stem.strip_prefix(prefix) {
+        let index = suffix.parse::<u32>().unwrap_or(0);
+        return (2, index, stem);
+    }
+    (3, 0, stem)
+}
+
+pub fn setup_fonts(ctx: &egui::Context, font_data: &[LoadedFont]) {
     let mut fonts = FontDefinitions::default();
     fonts.font_data.clear();
     let mut font_names: Vec<String> = Vec::new();
@@ -96,7 +176,7 @@ pub fn setup_fonts(ctx: &egui::Context, font_data: &[(String, &'static [u8])]) {
     for (name, data) in font_data {
         fonts
             .font_data
-            .insert(name.clone(), Arc::new(FontData::from_static(data)));
+            .insert(name.clone(), Arc::new(FontData::from_owned(data.clone())));
         fonts.families.insert(
             FontFamily::Name(Arc::from(name.as_str())),
             vec![name.clone()],
@@ -159,7 +239,7 @@ pub struct GlyphInfo {
     pub category: &'static str,
 }
 
-pub fn load_glyph_map(font_data: &[(String, &'static [u8])]) -> BTreeMap<u32, GlyphInfo> {
+pub fn load_glyph_map(font_data: &[LoadedFont]) -> BTreeMap<u32, GlyphInfo> {
     let mut map = BTreeMap::new();
     for (idx, (font_name, data)) in font_data.iter().enumerate() {
         let font_family = FontFamily::Name(Arc::from(font_name.as_str()));
