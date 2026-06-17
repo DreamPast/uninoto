@@ -5,7 +5,13 @@ import csv
 from pathlib import Path
 
 from .font_io import list_font_files, read_font_codepoints
-from .merge import project_mergeable_codepoint_filter
+from .merge import (
+    category_from_ranges,
+    is_last_resort_fallback_codepoint,
+    last_resort_output_names,
+    project_mergeable_codepoint_filter,
+    read_unicode_data_ranges,
+)
 from .planes import all_output_names
 from .unicode_utils import cp_hex, general_category
 
@@ -18,6 +24,8 @@ def main() -> None:
     parser.add_argument("--all", action="store_true")
     args = parser.parse_args()
     codepoint_filter = project_mergeable_codepoint_filter(Path(args.unicode_data))
+    category_ranges = read_unicode_data_ranges(Path(args.unicode_data))
+    last_resort_names = set(last_resort_output_names())
     font_files = list_font_files(Path(args.fonts_dir))
     names = set(all_output_names())
     fonts = (
@@ -31,9 +39,22 @@ def main() -> None:
         writer.writerow(["font", "codepoint", "general_category"])
         for font in fonts:
             for cp in read_font_codepoints(font, lambda _cp: True):
+                category = category_from_ranges(cp, category_ranges) or "Cn"
+                if (
+                    font.name in last_resort_names
+                    and is_last_resort_fallback_codepoint(cp, category)
+                    and font.parent.name == "full"
+                ):
+                    continue
                 if not codepoint_filter(cp):
                     invalid += 1
-                    writer.writerow([str(font), cp_hex(cp), general_category(cp)])
+                    writer.writerow(
+                        [
+                            str(font),
+                            cp_hex(cp),
+                            general_category(cp) if category == "Cn" else category,
+                        ]
+                    )
     print(f"fonts: {len(fonts)}")
     print(f"invalid codepoints: {invalid}")
 

@@ -16,6 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
 
+from .sfd_to_ttf import build_ttf_from_sfd
+
 GITHUB_API = "https://api.github.com"
 NOTO_CJK_RELEASE_TAGS = ("Sans2.004", "Serif2.003")
 NOTO_MONTHLY_REF_PREFIX = "noto-monthly-release-"
@@ -84,8 +86,16 @@ FALLBACK_ITEMS: tuple[tuple[str, Path], ...] = (
         Path("fallback/ScriptwideSansCJK/ScriptwideSansCJK-C.ttf"),
     ),
     (
+        "https://github.com/Fitzgerald-Porthmouth-Koenigsegg/Plangothic_Project/releases/download/V2.9.5792/PlangothicP2-Regular.ttf",
+        Path("fallback/Plangothic/PlangothicP2-Regular.ttf"),
+    ),
+    (
         "https://github.com/notofonts/khitan-small-script/releases/download/NotoFangsongKSSVertical-v1.000/NotoFangsongKSSVertical-v1.000.zip",
         Path("fallback/NotoFangsongKSSVertical-v1.000.zip"),
+    ),
+    (
+        "https://github.com/notofonts/dives-akuru/releases/download/NotoSerifDivesAkuru-v2.000/NotoSerifDivesAkuru-v2.000.zip",
+        Path("fallback/NotoSerifDivesAkuru-v2.000.zip"),
     ),
     (
         "https://github.com/silnrsi/font-kanchenjunga/releases/download/v2.001/Kanchenjunga-2.001.zip",
@@ -115,7 +125,24 @@ FALLBACK_ITEMS: tuple[tuple[str, Path], ...] = (
         "https://www.kreativekorp.com/swdownload/fonts/core/fairfaxhd.zip",
         Path("fallback/fairfaxhd.zip"),
     ),
+    (
+        "https://github.com/unicode-org/last-resort-font/releases/download/17.000/LastResort-Regular.ttf",
+        Path("fallback/LastResort/LastResort-Regular.ttf"),
+    ),
+    (
+        "https://raw.githubusercontent.com/notofonts/ol-onal/main/sources/NotoSerifOlOnal.sfd",
+        Path("fallback/NotoSourceBuilds/NotoSerifOlOnal.sfd"),
+    ),
+    (
+        "https://raw.githubusercontent.com/notofonts/gurung-khema/main/sources/NotoSansGurungKhema.sfd",
+        Path("fallback/NotoSourceBuilds/NotoSansGurungKhema.sfd"),
+    ),
 )
+
+SFD_OUTPUT_NAMES: dict[str, str] = {
+    "NotoSerifOlOnal.sfd": "NotoSerifOlOnal-Regular.ttf",
+    "NotoSansGurungKhema.sfd": "NotoSansGurungKhema-Regular.ttf",
+}
 
 
 def headers() -> dict[str, str]:
@@ -501,6 +528,12 @@ def handle_item(item: DownloadItem, output_root: Path) -> None:
         print(
             f"extracted {extract_noto_emoji_repo(target, output_root)} font files from {target.name}"
         )
+    elif target.suffix.lower() == ".sfd":
+        output_name = SFD_OUTPUT_NAMES.get(target.name)
+        if output_name:
+            output = target.with_name(output_name)
+            build_ttf_from_sfd(target, output)
+            print(f"built {output.name} from {target.name}")
     elif target.suffix.lower() == ".zip" and is_babelstone_archive(target):
         print(f"kept BabelStone archive without extraction: {target.name}")
     elif target.suffix.lower() == ".zip":
@@ -533,12 +566,19 @@ def main() -> None:
             *list_archives(output_root / "archives", ".zip"),
             *list_archives(output_root / "fallback", ".zip"),
             *list_archives(output_root / "fallback", ".rpm"),
+            *list_archives(output_root / "fallback", ".sfd"),
         ]
         for archive in archives:
             if archive.suffix.lower() == ".rpm":
                 print(
                     f"extracted {extract_abydos_rpm(archive, output_root)} font files from {archive.name}"
                 )
+            elif archive.suffix.lower() == ".sfd":
+                output_name = SFD_OUTPUT_NAMES.get(archive.name)
+                if output_name:
+                    output = archive.with_name(output_name)
+                    build_ttf_from_sfd(archive, output)
+                    print(f"built {output.name} from {archive.name}")
             elif archive.name.startswith("noto-emoji-"):
                 print(
                     f"extracted {extract_noto_emoji_repo(archive, output_root)} font files from {archive.name}"

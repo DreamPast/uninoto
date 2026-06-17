@@ -8,10 +8,12 @@ from pathlib import Path
 
 from .font_io import discover_fonts
 from .merge import (
+    LAST_RESORT_SOURCE,
     Options,
+    last_resort_fallback_codepoints,
     merge_family_outputs,
     project_mergeable_codepoint_filter,
-    remove_stale_last_reports,
+    remove_stale_extra_reports,
     style_options_for,
     write_style_reports,
 )
@@ -54,7 +56,9 @@ def merge_task(task: MergeTask) -> str:
         task.output,
         codepoint_filter,
         task.style,
-        False,
+        last_resort_codepoints=last_resort_fallback_codepoints(task.unicode_data),
+        last_resort_source=task.input / LAST_RESORT_SOURCE,
+        preserve_source_metadata=False,
     )
     return f"{task.style}/{task.family}"
 
@@ -118,7 +122,7 @@ def main() -> None:
         style: style_options_for(options, style) for style in options.styles
     }
     for item in style_options.values():
-        remove_stale_last_reports(item)
+        remove_stale_extra_reports(item)
     tasks = [
         MergeTask(
             input=options.input,

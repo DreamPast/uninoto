@@ -73,6 +73,7 @@ by src/uninoto/font_io.py:
   - Cascadia Code
   - HanaMinB and HanaMinC
   - Scriptwide Sans CJK A/B/C
+  - Plangothic P2
   - Noto Fangsong KSS Vertical
   - Kanchenjunga
   - Junicode
@@ -81,6 +82,9 @@ by src/uninoto/font_io.py:
   - Doulos SIL
   - Abydos
   - Fairfax HD
+  - Unicode Last Resort
+  - Noto Serif Dives Akuru
+  - Noto Gurung Khema and Noto Ol Onal SFD sources built into static TTFs
   - BabelStone static script fonts accepted by the source filter, including
     BabelStone Han and other BabelStone TTF/OTF script fonts that are not PUA,
     colour/color, vertical, rotated, or inverse variants.
@@ -230,15 +234,15 @@ Noto Sans (individual script families: Adlam, AnatolianHieroglyphs,
     Copyright The Noto Project Authors.
 
 Noto Serif (individual families: Ahom, Balinese, DivesAkuru, Dogra,
-    Makasar, NyiakengPuachueHmong, Tangut, Tibetan)
+    Makasar, NyiakengPuachueHmong, OlOnal, Tangut, Tibetan)
     Copyright The Noto Project Authors.
 
 Noto (additional: Arimo, Chorasmian, CyproMinoan, EgyptianHieroglyphs,
-    Glagolitic, Grantha, GunjalaGondi, HanifiRohingya, Kannada, Kawi,
-    MasaramGondi, Medefaidrin, NagMundari, Nandinagari, NaskhArabic,
-    OldUyghur, OttomanSiyaq, Phoenician, SignWriting, Sunuwar,
-    SyriacWestern, Tagalog, Tangsa, Telugu, Todhri, Toto, Vithkuqi,
-    Yezidi, Znamenny)
+    Glagolitic, Grantha, GunjalaGondi, GurungKhema, HanifiRohingya,
+    Kannada, Kawi, MasaramGondi, Medefaidrin, NagMundari, Nandinagari,
+    NaskhArabic, OldUyghur, OttomanSiyaq, Phoenician, SignWriting,
+    Sunuwar, SyriacWestern, Tagalog, Tangsa, Telugu, Todhri, Toto,
+    Vithkuqi, Yezidi, Znamenny)
     Copyright The Noto Project Authors.
 
 Cascadia Code
@@ -255,6 +259,9 @@ Scriptwide Sans CJK
       Noto Unicode — (c) MY1L
       Gothic Nguyen — (c) TKYKmori
       Sukima Gothic, Yuu Gothic, Lorchin Sans, Chiron Hei HK, WenYuanGothic
+
+Plangothic
+    Copyright (c) Fitzgerald Porthmouth Koenigsegg and contributors.
 
 Charis SIL
     Copyright (c) 1997-2025 SIL Global (https://www.sil.org/)
@@ -297,6 +304,13 @@ Harmattan
 Fairfax HD
     Copyright (c) Kreative Software 2017-2026.
     Fairfax HD by KreativeKorp, under the Open Font License.
+
+Unicode Last Resort
+    Copyright (c) 1998-2025 Unicode, Inc.
+    Last Resort Font from unicode-org/last-resort-font release 17.000,
+    with Reserved Font Names "Last Resort" and "Last Resort High-Efficiency".
+    Used only for full/last_resort diagnostic glyph prompts for non-blank invisible
+    codepoints; not used as visible-character coverage.
 
 BabelStone series
     Copyright (c) 2006-2025, Andrew West (www.babelstone.co.uk),

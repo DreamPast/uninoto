@@ -3,12 +3,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, cast
 
+from fontTools.pens.boundsPen import BoundsPen
 from fontTools.ttLib import TTFont
 
 from .planes import FontStyle
-from .unicode_utils import is_mergeable_codepoint
+from .unicode_utils import general_category, is_mergeable_codepoint
 
 LEGACY_NOTO_SOURCE_SEGMENTS = ("/noto-fonts/", "/noto-cjkext/", "/noto-extra/")
 SourceStyle = Literal["regular", "bold", "italic", "bolditalic", "unknown", "other"]
@@ -72,12 +73,10 @@ def is_static_source_font(path: Path) -> bool:
     if is_variable_font(path):
         return False
     if "/noto-emoji/" in normalized:
-        return basename in {
-            "notoemoji-regular.ttf",
-            "noto-colrv1.ttf",
-            "noto-colrv1-noflags.ttf",
-        }
+        return basename == "notoemoji-regular.ttf"
     if "/fallback/" in normalized:
+        if "/fallback/lastresort/" in normalized:
+            return False
         if basename == "abydos.ttf":
             return normalized.endswith("/fallback/abydos.ttf")
         if basename == "notofangsongkssvertical-regular.ttf":
@@ -93,6 +92,10 @@ def is_static_source_font(path: Path) -> bool:
             "jigmo.ttf",
             "jigmo2.ttf",
             "jigmo3.ttf",
+            "notosansgurungkhema-regular.ttf",
+            "notoserifdivesakuru-regular.ttf",
+            "notoserifolonal-regular.ttf",
+            "plangothicp2-regular.ttf",
             "scriptwidesanscjk-a.ttf",
             "scriptwidesanscjk-b.ttf",
             "scriptwidesanscjk-c.ttf",
@@ -101,6 +104,7 @@ def is_static_source_font(path: Path) -> bool:
             "scheherazadenew-regular.ttf",
             "harmattan-regular.ttf",
             "kanchenjunga-regular.ttf",
+            "tangutyinchuan.ttf",
             "junicode-regular.ttf",
             "kedebideri-regular.ttf",
             "charis-regular.ttf",
@@ -150,13 +154,51 @@ def is_source_font_for_style(path: Path, style: FontStyle) -> bool:
 CodepointFilter = Callable[[int], bool]
 
 
+def _glyph_has_outline(path: Path, font: TTFont, glyph_name: str) -> bool:
+    for tag in ("CFF ", "CFF2"):
+        if tag in font:
+            if "duployan" not in path.name.lower():
+                return True
+            try:
+                cff_table = cast(Any, font[tag])
+                charstrings = cff_table.cff.topDictIndex[0].CharStrings
+                return charstrings[glyph_name].calcBounds(None) is not None
+            except Exception:
+                break
+    if "glyf" not in font:
+        glyph_set = font.getGlyphSet()
+        if glyph_name not in glyph_set:
+            return False
+        pen = BoundsPen(glyph_set)
+        glyph_set[glyph_name].draw(pen)
+        return pen.bounds is not None
+    glyf = cast(Any, font["glyf"])
+    if glyph_name not in glyf:
+        return False
+    glyph = glyf[glyph_name]
+    return bool(glyph.isComposite() or getattr(glyph, "numberOfContours", 0) > 0)
+
+
+def _codepoint_has_usable_glyph(
+    path: Path, font: TTFont, codepoint: int, glyph_name: str
+) -> bool:
+    if _glyph_has_outline(path, font, glyph_name):
+        return True
+    return general_category(codepoint).startswith("M")
+
+
 def read_font_codepoint_map(
     path: Path, codepoint_filter: CodepointFilter = is_mergeable_codepoint
 ) -> dict[int, str]:
     font = TTFont(path, lazy=True, fontNumber=0)
     try:
         cmap = font.getBestCmap() or {}
-        return {cp: glyph for cp, glyph in cmap.items() if codepoint_filter(cp)}
+        return {
+            cp: glyph
+            for cp, glyph in cmap.items()
+            if codepoint_filter(cp)
+            and _codepoint_has_usable_glyph(path, font, cp, glyph)
+        }
     finally:
         font.close()
 

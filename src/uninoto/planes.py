@@ -3,12 +3,20 @@ from __future__ import annotations
 from typing import Literal
 
 Category = Literal["bmp", "upper", "upper1", "upper2"]
-FontFamily = Literal["sans", "serif", "mono", "last"]
+FontFamily = Literal["sans", "serif", "mono", "extra", "last_resort"]
 FontStyle = Literal["regular", "bold", "italic", "bolditalic", "full"]
 
 MAX_RECOGNIZED_UPPER_OUTPUTS = 512
-MAX_RECOGNIZED_LAST_OUTPUTS = 512
-FONT_FAMILIES: tuple[FontFamily, ...] = ("sans", "serif", "mono", "last")
+MAX_RECOGNIZED_EXTRA_OUTPUTS = 512
+MAX_RECOGNIZED_LAST_RESORT_OUTPUTS = 512
+MAX_RECOGNIZED_SPLIT_OUTPUTS = 512
+FONT_FAMILIES: tuple[FontFamily, ...] = (
+    "sans",
+    "serif",
+    "mono",
+    "extra",
+    "last_resort",
+)
 FONT_STYLES: tuple[FontStyle, ...] = (
     "regular",
     "bold",
@@ -16,14 +24,26 @@ FONT_STYLES: tuple[FontStyle, ...] = (
     "bolditalic",
     "full",
 )
-LAST_OUTPUT_NAMES = (
+EXTRA_OUTPUT_NAMES = (
+    "uninoto_extra.ttf",
+    *(
+        f"uninoto_extra{index}.ttf"
+        for index in range(1, MAX_RECOGNIZED_EXTRA_OUTPUTS + 1)
+    ),
+)
+LAST_RESORT_OUTPUT_NAMES = (
+    "uninoto_last_resort.ttf",
+    *(
+        f"uninoto_last_resort{index}.ttf"
+        for index in range(1, MAX_RECOGNIZED_LAST_RESORT_OUTPUTS + 1)
+    ),
+)
+LEGACY_EXTRA_OUTPUT_NAMES = (
     "uninoto_last.ttf",
     *(
         f"uninoto_last{index}.ttf"
-        for index in range(1, MAX_RECOGNIZED_LAST_OUTPUTS + 1)
+        for index in range(1, MAX_RECOGNIZED_EXTRA_OUTPUTS + 1)
     ),
-)
-LEGACY_LAST_OUTPUT_NAMES = (
     "uninoto_other.ttf",
     "uninoto_other1.ttf",
     "uninoto_other2.ttf",
@@ -32,7 +52,8 @@ FAMILY_PREFIX: dict[FontFamily, str] = {
     "sans": "uninoto_sans",
     "serif": "uninoto_serif",
     "mono": "uninoto_mono",
-    "last": "uninoto_last",
+    "extra": "uninoto_extra",
+    "last_resort": "uninoto_last_resort",
 }
 
 
@@ -43,17 +64,27 @@ def codepoint_in_category(category: Category, codepoint: int) -> bool:
 
 
 def output_name_for(family: FontFamily, category: str) -> str:
-    if family == "last":
+    if family == "extra":
         if category == "bmp":
-            return LAST_OUTPUT_NAMES[0]
+            return EXTRA_OUTPUT_NAMES[0]
+        if category.isdecimal():
+            return f"uninoto_extra{category}.ttf"
         if category == "upper1":
-            return LAST_OUTPUT_NAMES[1]
+            return EXTRA_OUTPUT_NAMES[1]
         if category == "upper2":
-            return LAST_OUTPUT_NAMES[2]
-        return f"uninoto_last_{category}.ttf"
+            return EXTRA_OUTPUT_NAMES[2]
+        return f"uninoto_extra_{category}.ttf"
+    if family == "last_resort":
+        if category == "bmp":
+            return LAST_RESORT_OUTPUT_NAMES[0]
+        if category.isdecimal():
+            return f"uninoto_last_resort{category}.ttf"
+        return f"uninoto_last_resort_{category}.ttf"
     prefix = FAMILY_PREFIX[family]
     if category == "bmp":
         return f"{prefix}.ttf"
+    if category.isdecimal():
+        return f"{prefix}{category}.ttf"
     if category == "upper":
         return f"{prefix}_upper.ttf"
     return f"{prefix}_{category}.ttf"
@@ -64,14 +95,21 @@ def all_output_names() -> list[str]:
         "upper",
         *(f"upper{index}" for index in range(1, MAX_RECOGNIZED_UPPER_OUTPUTS + 1)),
     ]
+    split_categories = [
+        str(index) for index in range(1, MAX_RECOGNIZED_SPLIT_OUTPUTS + 1)
+    ]
     return [
         output_name_for("sans", "bmp"),
+        *(output_name_for("sans", c) for c in split_categories),
         *(output_name_for("sans", c) for c in upper_categories),
         output_name_for("serif", "bmp"),
+        *(output_name_for("serif", c) for c in split_categories),
         *(output_name_for("serif", c) for c in upper_categories),
         output_name_for("mono", "bmp"),
+        *(output_name_for("mono", c) for c in split_categories),
         *(output_name_for("mono", c) for c in upper_categories),
-        *LAST_OUTPUT_NAMES,
+        *EXTRA_OUTPUT_NAMES,
+        *LAST_RESORT_OUTPUT_NAMES,
     ]
 
 
@@ -81,7 +119,7 @@ def parse_font_family(value: str | None, option_name: str = "family") -> FontFam
     if value == "serief":
         return "serif"
     raise ValueError(
-        f"invalid {option_name}: {value or '<missing>'} (expected sans, serif, mono, or last)"
+        f"invalid {option_name}: {value or '<missing>'} (expected sans, serif, mono, extra, or last_resort)"
     )
 
 
