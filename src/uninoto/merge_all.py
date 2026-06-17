@@ -141,7 +141,7 @@ def main() -> None:
         for future in concurrent.futures.as_completed(futures):
             print(f"completed {future.result()}")
     for style in options.styles:
-        write_style_reports(style_options[style], families, codepoint_filter)
+        write_style_reports(style_options[style], families)
 
 
 if __name__ == "__main__":

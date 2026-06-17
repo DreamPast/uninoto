@@ -26,7 +26,7 @@ Font sources are routed by explicit family signals in their path or file name:
 - `serif` uses sources that clearly identify themselves as serif (including the legacy `serief` spelling).
 - `mono` uses mono sources first, then non-serif sources with normalized advance widths.
 - `extra` uses neutral sources that are not clearly sans or serif, and also stores the coverage difference between clearly classified sans and serif sources so the two fallback chains align.
-- `last_resort` stores Unicode Last Resort diagnostic prompts for non-blank invisible codepoints in the `full` style only.
+- `last_resort` stores Unicode Last Resort diagnostic prompts for whitespace and invisible codepoints in the `full` style only.
 
 Outputs are grouped by style under `fonts/merged/<style>/`. The default build
 creates `regular`; additional supported style builds are `bold`, `italic`,
@@ -45,11 +45,11 @@ neutral sources plus the coverage difference between clearly classified sans and
 serif sources.
 
 The `full` style's `last_resort` output contains Unicode Last Resort prompts
-for non-blank invisible codepoints (`Cc`, `Cf`, `Cs`, `Co`, and `Cn`). These
-prompts are diagnostic glyphs: they help reveal control characters,
-private-use characters, surrogate codepoints, unassigned codepoints, and
-noncharacters on systems that would otherwise render them as blank. They are not
-used for visible character coverage and are kept separate from `extra`.
+for whitespace codepoints plus invisible codepoints (`Cc`, `Cf`, `Cs`, `Co`, and
+`Cn`). These prompts are diagnostic glyphs: they help reveal spaces, control
+characters, private-use characters, surrogate codepoints, unassigned codepoints,
+and noncharacters on systems that would otherwise render them as blank. They are
+not used for visible character coverage and are kept separate from `extra`.
 
 The `mono` family uses normalized advance widths that match the current Noto
 mono sources: half-width 600 and full-width 1000.
@@ -72,7 +72,7 @@ Output structure:
 | `fonts/merged/<style>/uninoto_mono<N>.ttf` | Mono bucket N | Written as needed when Mono exceeds the glyph limit |
 | `fonts/merged/<style>/uninoto_extra.ttf` | Neutral shared fallback | Contains all extra codepoints when they fit |
 | `fonts/merged/<style>/uninoto_extra<N>.ttf` | Extra bucket N | Written as needed when extra output exceeds the glyph limit |
-| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort diagnostics | Contains non-blank invisible-codepoint prompts |
+| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort diagnostics | Contains whitespace and invisible-codepoint prompts |
 
 Coverage as of the 2026-06-16 merge against Unicode 17 visible codepoints
 (159,631 total):
@@ -133,7 +133,7 @@ every possible character.
 | [Kanchenjunga](https://github.com/silnrsi/font-kanchenjunga) | Kirat Rai script | OFL 1.1 |
 | [Kedebideri](https://software.sil.org/kedebideri/) | Zaghawa Beria script | OFL 1.1 |
 | [Fairfax HD](https://www.kreativekorp.com/software/fonts/fairfaxhd/) | UCSUR and scholarly characters | OFL 1.1 |
-| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` diagnostic prompts for non-blank invisible codepoints | OFL 1.1 |
+| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` diagnostic prompts for whitespace and invisible codepoints | OFL 1.1 |
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | Khitan small script | OFL 1.1 |
 | [Noto Serif Dives Akuru](https://github.com/notofonts/dives-akuru) | Dives Akuru script | OFL 1.1 |
 | [Noto Gurung Khema](https://github.com/notofonts/gurung-khema) | Gurung Khema script, built from upstream SFD source | OFL 1.1 |

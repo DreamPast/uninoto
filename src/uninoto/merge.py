@@ -809,12 +809,12 @@ def _copy_last_resort_glyphs(
 
 
 def is_last_resort_fallback_codepoint(codepoint: int, category: str) -> bool:
-    if category not in LAST_RESORT_FALLBACK_CATEGORIES:
-        return False
     try:
-        return not chr(codepoint).isspace()
+        if chr(codepoint).isspace():
+            return True
     except ValueError:
         return False
+    return category in LAST_RESORT_FALLBACK_CATEGORIES
 
 
 def last_resort_fallback_codepoints(unicode_data: Path) -> set[int]:
@@ -1490,6 +1490,16 @@ def is_visible_report_codepoint(
     return True
 
 
+def report_codepoint_filter(
+    category_ranges: list[GeneralCategoryRange], include_marks: bool
+) -> CodepointFilter:
+    def codepoint_filter(codepoint: int) -> bool:
+        category = category_for_report(codepoint, category_ranges)
+        return is_visible_report_codepoint(codepoint, category, include_marks)
+
+    return codepoint_filter
+
+
 def merged_coverage_fonts(output_root: Path, family: FontFamily) -> list[Path]:
     family_names = family_output_names(family)
     names = set(
@@ -1509,12 +1519,34 @@ def collect_merged_coverage(
     return covered
 
 
+def collect_report_coverage(
+    font_paths: list[Path],
+    codepoint_filter: CodepointFilter,
+    extra_codepoints: set[int] | None = None,
+) -> set[int]:
+    if extra_codepoints is None:
+        return collect_merged_coverage(font_paths, codepoint_filter)
+
+    extra_names = set(extra_output_names())
+    base_paths = [path for path in font_paths if path.name not in extra_names]
+    extra_paths = [path for path in font_paths if path.name in extra_names]
+    covered = collect_merged_coverage(base_paths, codepoint_filter)
+
+    def extra_filter(codepoint: int) -> bool:
+        return codepoint in extra_codepoints and codepoint_filter(codepoint)
+
+    covered.update(collect_merged_coverage(extra_paths, extra_filter))
+    return covered
+
+
 def font_files_by_output_names(output_root: Path, names: set[str]) -> list[Path]:
     return [file for file in list_font_files(output_root) if file.name in names]
 
 
 def check_sans_serif_fallback_coverage(
-    output_root: Path, codepoint_filter: CodepointFilter
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    extra_codepoints: set[int],
 ) -> None:
     sans_names = {
         *family_output_names("sans"),
@@ -1524,11 +1556,15 @@ def check_sans_serif_fallback_coverage(
         *family_output_names("serif"),
         *extra_output_names(),
     }
-    sans = collect_merged_coverage(
-        font_files_by_output_names(output_root, sans_names), codepoint_filter
+    sans = collect_report_coverage(
+        font_files_by_output_names(output_root, sans_names),
+        codepoint_filter,
+        extra_codepoints,
     )
-    serif = collect_merged_coverage(
-        font_files_by_output_names(output_root, serif_names), codepoint_filter
+    serif = collect_report_coverage(
+        font_files_by_output_names(output_root, serif_names),
+        codepoint_filter,
+        extra_codepoints,
     )
     only_sans = [cp for cp in sans if cp not in serif]
     only_serif = [cp for cp in serif if cp not in sans]
@@ -1543,19 +1579,12 @@ def write_missing_visible_report_for_fonts(
     font_paths: list[Path],
     missing_output: Path,
     missing_summary_output: Path | None,
+    extra_codepoints: set[int] | None = None,
 ) -> None:
-    codepoint_filter = project_mergeable_codepoint_filter(options.unicode_data)
-    covered = collect_merged_coverage(font_paths, codepoint_filter)
     age_ranges = read_age_ranges(options.derived_age)
     category_ranges = read_unicode_data_ranges(options.unicode_data)
-    covered_visible_with_marks = 0
-    covered_visible_nonmark = 0
-    for cp in covered:
-        category = category_for_report(cp, category_ranges)
-        if is_visible_report_codepoint(cp, category, True):
-            covered_visible_with_marks += 1
-        if is_visible_report_codepoint(cp, category, False):
-            covered_visible_nonmark += 1
+    codepoint_filter = report_codepoint_filter(category_ranges, options.include_marks)
+    covered = collect_report_coverage(font_paths, codepoint_filter, extra_codepoints)
     missing: list[int] = []
     ranges = (
         [(range_.start, range_.end) for range_ in age_ranges]
@@ -1597,18 +1626,41 @@ def write_missing_visible_report_for_fonts(
     names = ", ".join(
         name for name in (output_font_name(path) for path in font_paths) if name
     )
-    covered_visible = (
-        covered_visible_with_marks if options.include_marks else covered_visible_nonmark
-    )
     report_scope = "visible codepoints" if options.include_marks else "visible non-mark"
     print(f"{label} coverage fonts: {names}")
-    print(f"{label} covered {report_scope}: {covered_visible}")
+    print(f"{label} covered {report_scope}: {len(covered)}")
     print(f"wrote {missing_output} ({len(missing)} missing {report_scope})")
+
+
+def selected_extra_report_codepoints(
+    options: Options, codepoint_filter: CodepointFilter
+) -> set[int]:
+    style = options.styles[0]
+    fonts = discover_fonts(options.input, codepoint_filter, style)
+    sans = {item.codepoint for item in selected_output_codepoints(fonts, "sans", style)}
+    serif = {
+        item.codepoint for item in selected_output_codepoints(fonts, "serif", style)
+    }
+    neutral = {
+        item.codepoint for item in selected_output_codepoints(fonts, "extra", style)
+    }
+    return {
+        *{cp for cp in neutral if cp not in sans or cp not in serif},
+        *{cp for cp in sans if cp not in serif and cp not in neutral},
+        *{cp for cp in serif if cp not in sans and cp not in neutral},
+    }
 
 
 def write_missing_visible_report(options: Options, family: FontFamily) -> None:
     if family not in REPORT_FAMILIES:
         return
+    category_ranges = read_unicode_data_ranges(options.unicode_data)
+    codepoint_filter = report_codepoint_filter(category_ranges, options.include_marks)
+    extra_codepoints = (
+        selected_extra_report_codepoints(options, codepoint_filter)
+        if family in {"sans", "serif"}
+        else None
+    )
     write_missing_visible_report_for_fonts(
         options,
         family,
@@ -1619,6 +1671,7 @@ def write_missing_visible_report(options: Options, family: FontFamily) -> None:
             if options.missing_summary_output
             else None
         ),
+        extra_codepoints,
     )
     if family in {"sans", "serif"}:
         write_missing_visible_report_for_fonts(
@@ -2013,7 +2066,6 @@ def style_options_for(options: Options, style: FontStyle) -> Options:
 def write_style_reports(
     options: Options,
     families: list[FontFamily],
-    codepoint_filter: CodepointFilter,
 ) -> None:
     report_families: list[FontFamily] = (
         ["sans", "serif"] if options.family == "extra" else families
@@ -2023,7 +2075,14 @@ def write_style_reports(
         if family in REPORT_FAMILIES:
             write_missing_visible_report(options, family)
     if not options.family or options.family == "extra":
-        check_sans_serif_fallback_coverage(options.output, codepoint_filter)
+        category_ranges = read_unicode_data_ranges(options.unicode_data)
+        codepoint_filter = report_codepoint_filter(
+            category_ranges, options.include_marks
+        )
+        extra_codepoints = selected_extra_report_codepoints(options, codepoint_filter)
+        check_sans_serif_fallback_coverage(
+            options.output, codepoint_filter, extra_codepoints
+        )
 
 
 def parse_args() -> Options:
@@ -2094,7 +2153,7 @@ def main() -> None:
                 last_resort_codepoints=last_resort_codepoints,
                 last_resort_source=last_resort_source,
             )
-        write_style_reports(style_options, families, codepoint_filter)
+        write_style_reports(style_options, families)
 
 
 if __name__ == "__main__":

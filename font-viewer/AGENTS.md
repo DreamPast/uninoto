@@ -6,9 +6,9 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 
 ## Font Loading
 
-- Fonts are embedded at compile time via `include_bytes!()`.
-- All 10 merged fonts (Sans x4, Serif x4, Mono x3 with `uninoto_last` shared) are baked into the binary (~172 MB).
-- Font data is stored in `ViewerApp.font_data` as `Vec<(String, &'static [u8])>`.
+- Merged fonts are loaded from the selected `fonts/merged/<style>` folder at runtime.
+- `extra` and `last_resort` fallback outputs are optional UI toggles; `last_resort` is enabled only for the `Full` style.
+- Font data is stored in `ViewerApp.font_data` as `Vec<(String, Vec<u8>)>`.
 - egui built-in fonts are removed — only uninoto fonts are registered.
 - Font families are registered fresh when the family selector changes (deferred via `needs_reload` flag to respect `set_fonts`'s deferred activation).
 
@@ -16,9 +16,9 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 
 | Family | Font Files |
 |--------|-----------|
-| Sans   | `uninoto_sans.ttf` → `uninoto_sans_upper1.ttf` → `uninoto_sans_upper2.ttf` → `uninoto_last.ttf` |
-| Serif  | `uninoto_serif.ttf` → `uninoto_serif_upper1.ttf` → `uninoto_serif_upper2.ttf` → `uninoto_last.ttf` |
-| Mono   | `uninoto_mono.ttf` → `uninoto_mono_upper1.ttf` → `uninoto_mono_upper2.ttf` (no last) |
+| Sans   | `uninoto_sans*` plus optional `uninoto_extra*` and `uninoto_last_resort*` |
+| Serif  | `uninoto_serif*` plus optional `uninoto_extra*` and `uninoto_last_resort*` |
+| Mono   | `uninoto_mono*` plus optional `uninoto_last_resort*` |
 
 ## CMap Parsing
 
@@ -32,8 +32,13 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 
 - **List mode**: virtual-scrolled table with columns: Glyph, Codepoint, Name, Plane, Category.
   - Horizontal separators between rows, zero `item_spacing` to avoid `show_rows` gap accumulation.
-- **Grid mode**: virtual-scrolled fixed-width character slots (32 per row) using `FontFamily::Monospace`.
+  - Control-character glyph cells are painted from font outlines so `\t` and similar codepoints do not render as text-layout whitespace.
+- **Grid mode**: virtual-scrolled table rows from `0000` to `10FFF0`, with a codepoint row header and 16 fixed-height character cells.
+  - Rows made entirely of unassigned or surrogate codepoints are hidden; control codepoint rows remain visible.
   - Hovering a character shows a tooltip with codepoint, plane, category, and Unicode name.
+  - Search results keep matched row context: rows without a match are hidden, covered glyphs outside the match are gray, and missing glyph cells are blank.
+  - Control-character glyph cells use the same font-outline painting as List mode.
+  - Covered glyph cells can be selected; double-click or `Ctrl+C`/`Cmd+C` copies the character, and the context menu can copy the character or codepoint.
 - **Text mode**: free-form multiline `TextEdit` for user input, independent of font glyphs.
 
 ## Controls
@@ -41,14 +46,20 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 - **Zoom**: `spin_box` widget (▼/▲ buttons + text input), step 0.25, range 0.5–3.0. Reads system DPI as initial value. NaN → reset to system default.
 - **Size**: `DragValue`, step 0.25, range 6–48. Controls glyph/table font size.
 - **Family**: Sans/Serif/Mono selector.
+- **Show**: Extra and Last Resort toggles; Last Resort is disabled outside Full style.
 - **View**: List/Grid/Text mode selector.
 - **Jump to**: hex codepoint navigation (U+XXXX).
 - **Search**: filter by hex codepoint, character, or Unicode name.
 
 ## Code Structure
 
-- `src/util.rs`: `FontFamilyMode`, font data arrays, `setup_fonts`, `load_glyph_map`, `build_grid_rows`, `plane_name`, `category_abbr`.
-- `src/main.rs`: `ViewerApp` struct, `App` impl, all UI rendering split into focused methods (`show_top_panel`, `show_jump_bar`, `show_search_bar`, `show_list_view`, `show_grid_view`, `render_list_row`, `render_grid_row`, `try_apply_filter`, `matches_search`, `spin_box`).
+- `src/main.rs`: thin eframe entry point and module declarations.
+- `src/app.rs`: `ViewerApp` state, reload/search logic, and List/Grid/Text view composition.
+- `src/font_data.rs`: font style/family modes, folder resolution, font loading, and egui font registration.
+- `src/glyph_data.rs`: cmap scanning, `GlyphInfo`, Unicode metadata, and Grid row selection.
+- `src/glyph_paint.rs`: glyph cell painting, including outline painting for control-character glyphs.
+- `src/controls.rs`: small UI helpers such as `spin_box` and hex parsing.
+- `src/util.rs`: compatibility re-exports for shared app imports.
 
 ## Dependencies
 

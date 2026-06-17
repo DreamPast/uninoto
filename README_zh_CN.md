@@ -18,7 +18,7 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 - `serif` 只使用明确标识为 serif 的来源，也兼容历史拼写 `serief`。
 - `mono` 优先使用 mono 来源，然后使用非 serif 来源，并统一 advance width。
 - `extra` 使用无法明确归为 sans 或 serif 的中性来源，并保存明确 sans 与明确 serif 来源之间的覆盖差异，使两条 fallback 链覆盖一致。
-- `last_resort` 只在 `full` 样式中保存 Unicode Last Resort 对非空白不可见码点的诊断提示字形。
+- `last_resort` 只在 `full` 样式中保存 Unicode Last Resort 对空白字符和不可见码点的诊断提示字形。
 
 输出按样式放在 `fonts/merged/<style>/` 下。默认构建 `regular`，也可以构建
 `bold`、`italic`、`bolditalic` 和 `full`。样式命名不确定的静态字体会归入
@@ -32,7 +32,7 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 
 `uninoto_extra.ttf` 包含 `sans` 和 `serif` 共用的后备覆盖：中性来源，以及明确 sans 与明确 serif 来源之间的覆盖差异。
 
-`full` 样式的 `last_resort` 输出包含 Unicode Last Resort 对非空白不可见码点的提示字形（`Cc`、`Cf`、`Cs`、`Co` 和 `Cn`）。这些字形用于诊断：当系统本来会把控制字符、私用字符、代理码点、未分配码点或非字符渲染为空白时，它们可以提示用户这里存在隐藏字符及其 Unicode 区段或来源类别。它们不用于可见字符覆盖，并与 `extra` 分开保存。
+`full` 样式的 `last_resort` 输出包含 Unicode Last Resort 对空白字符以及不可见码点的提示字形（`Cc`、`Cf`、`Cs`、`Co` 和 `Cn`）。这些字形用于诊断：当系统本来会把空格、控制字符、私用字符、代理码点、未分配码点或非字符渲染为空白时，它们可以提示用户这里存在隐藏字符及其 Unicode 区段或来源类别。它们不用于可见字符覆盖，并与 `extra` 分开保存。
 
 `mono`族字体经过等宽处理，advance width 与当前 Noto mono 系列保持一致：半宽 600，全宽 1000。
 
@@ -50,7 +50,7 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 | `fonts/merged/<style>/uninoto_mono<N>.ttf` | Mono N | Mono 超出 glyph 上限时按需写入 |
 | `fonts/merged/<style>/uninoto_extra.ttf` | 中性共享补充 | 能放下时包含全部 extra 码点 |
 | `fonts/merged/<style>/uninoto_extra<N>.ttf` | Extra N | extra 输出超出 glyph 上限时按需写入 |
-| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort 诊断 | 包含非空白不可见码点提示字形 |
+| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort 诊断 | 包含空白字符和不可见码点提示字形 |
 
 截至 2026-06-16 的 Unicode 17 合并审计，可见码点共 159631 个，覆盖率如下：
 
@@ -104,7 +104,7 @@ uninoto 按样式合并静态 TTF/OTF 字体，并排除变量字体。每个输
 | [Kanchenjunga](https://github.com/silnrsi/font-kanchenjunga) | Kirat Rai 文字 | OFL 1.1 |
 | [Kedebideri](https://software.sil.org/kedebideri/) | Zaghawa Beria 文字 | OFL 1.1 |
 | [Fairfax HD](https://www.kreativekorp.com/software/fonts/fairfaxhd/) | 多种 UCSUR 及学术字符 | OFL 1.1 |
-| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` 中非空白不可见码点的诊断提示字形 | OFL 1.1 |
+| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` 中空白字符和不可见码点的诊断提示字形 | OFL 1.1 |
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | 契丹小字 | OFL 1.1 |
 | [Noto Serif Dives Akuru](https://github.com/notofonts/dives-akuru) | Dives Akuru 文字 | OFL 1.1 |
 | [Noto Gurung Khema](https://github.com/notofonts/gurung-khema) | Gurung Khema 文字，从上游 SFD 源码构建 | OFL 1.1 |
