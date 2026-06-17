@@ -82,7 +82,6 @@ by src/uninoto/font_io.py:
   - Doulos SIL
   - Abydos
   - Fairfax HD
-  - Unicode Last Resort
   - Noto Serif Dives Akuru
   - Noto Gurung Khema and Noto Ol Onal SFD sources built into static TTFs
   - BabelStone static script fonts accepted by the source filter, including
@@ -304,13 +303,6 @@ Harmattan
 Fairfax HD
     Copyright (c) Kreative Software 2017-2026.
     Fairfax HD by KreativeKorp, under the Open Font License.
-
-Unicode Last Resort
-    Copyright (c) 1998-2025 Unicode, Inc.
-    Last Resort Font from unicode-org/last-resort-font release 17.000,
-    with Reserved Font Names "Last Resort" and "Last Resort High-Efficiency".
-    Used only for full/last_resort diagnostic glyph prompts for non-blank invisible
-    codepoints; not used as visible-character coverage.
 
 BabelStone series
     Copyright (c) 2006-2025, Andrew West (www.babelstone.co.uk),

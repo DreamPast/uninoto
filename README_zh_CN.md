@@ -10,15 +10,15 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 
 ## 字体结果
 
-当前项目输出 `sans`（无衬线）、`serif`（衬线）、`mono`（等宽）、共享的 `extra` 后备输出，以及单独的 `last_resort` 诊断输出。CJK 汉字在可用时优先使用简体中文字形。
+当前项目输出 `sans`（无衬线）、`serif`（衬线）、`mono`（等宽）以及按目标族拆分的 `extra` 后备输出。CJK 汉字在可用时优先使用简体中文字形。
 
 字体来源会按路径或文件名中的明确族信息归类：
 
 - `sans` 只使用明确标识为 sans 的来源，例如 Noto Sans 或 Sans CJK 来源。
 - `serif` 只使用明确标识为 serif 的来源，也兼容历史拼写 `serief`。
 - `mono` 优先使用 mono 来源，然后使用非 serif 来源，并统一 advance width。
-- `extra` 使用无法明确归为 sans 或 serif 的中性来源，并保存明确 sans 与明确 serif 来源之间的覆盖差异，使两条 fallback 链覆盖一致。
-- `last_resort` 只在 `full` 样式中保存 Unicode Last Resort 对空白字符和不可见码点的诊断提示字形。
+- `sans_extra` 使用中性来源以及 serif 选中来源中 sans 缺失的码点。
+- `serif_extra` 使用中性来源以及 sans 选中来源中 serif 缺失的码点。
 
 输出按样式放在 `fonts/merged/<style>/` 下。默认构建 `regular`，也可以构建
 `bold`、`italic`、`bolditalic` 和 `full`。样式命名不确定的静态字体会归入
@@ -30,9 +30,7 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 - 如果某个族放不进单个 TTF，会直接拆成编号文件，例如 `uninoto_sans1.ttf`、`uninoto_sans2.ttf`
 - 空的拆分分桶会跳过，不写空字体
 
-`uninoto_extra.ttf` 包含 `sans` 和 `serif` 共用的后备覆盖：中性来源，以及明确 sans 与明确 serif 来源之间的覆盖差异。
-
-`full` 样式的 `last_resort` 输出包含 Unicode Last Resort 对空白字符以及不可见码点的提示字形（`Cc`、`Cf`、`Cs`、`Co` 和 `Cn`）。这些字形用于诊断：当系统本来会把空格、控制字符、私用字符、代理码点、未分配码点或非字符渲染为空白时，它们可以提示用户这里存在隐藏字符及其 Unicode 区段或来源类别。它们不用于可见字符覆盖，并与 `extra` 分开保存。
+建议把 uninoto 放在字体 fallback 链的末尾，用作缺失字体或无效字形覆盖的可见提示。生成字体的 `.notdef` 是可见的 Noto 风格缺字方框，因此仍然无法表示的文本不容易静默消失。如果需要能标识 Unicode 区段或特殊码点类别的完整终级提示字体，请查看 [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) 项目。
 
 `mono`族字体经过等宽处理，advance width 与当前 Noto mono 系列保持一致：半宽 600，全宽 1000。
 
@@ -48,18 +46,19 @@ uninoto 更适合作为后备字体使用。当应用或文档已经尝试了自
 | `fonts/merged/<style>/uninoto_serif<N>.ttf` | Serif N | Serif 超出 glyph 上限时按需写入 |
 | `fonts/merged/<style>/uninoto_mono.ttf` | Mono | 能放下时包含 Mono 全部码点 |
 | `fonts/merged/<style>/uninoto_mono<N>.ttf` | Mono N | Mono 超出 glyph 上限时按需写入 |
-| `fonts/merged/<style>/uninoto_extra.ttf` | 中性共享补充 | 能放下时包含全部 extra 码点 |
-| `fonts/merged/<style>/uninoto_extra<N>.ttf` | Extra N | extra 输出超出 glyph 上限时按需写入 |
-| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort 诊断 | 包含空白字符和不可见码点提示字形 |
+| `fonts/merged/<style>/uninoto_sans_extra.ttf` | Sans extra 补充 | 能放下时包含全部 sans extra 码点 |
+| `fonts/merged/<style>/uninoto_sans_extra<N>.ttf` | Sans extra N | sans extra 超出 glyph 上限时按需写入 |
+| `fonts/merged/<style>/uninoto_serif_extra.ttf` | Serif extra 补充 | 能放下时包含全部 serif extra 码点 |
+| `fonts/merged/<style>/uninoto_serif_extra<N>.ttf` | Serif extra N | serif extra 超出 glyph 上限时按需写入 |
 
-截至 2026-06-16 的 Unicode 17 合并审计，可见码点共 159631 个，覆盖率如下：
+截至 2026-06-17 的 Unicode 17 合并审计，可见码点共 159631 个，覆盖率如下：
 
 `Sans + extra` 和 `Serif + extra` 是实际 fallback 链覆盖率。单独的 `Sans base` 和
-`Serif base` 只统计明确归类到对应基础族的来源，不包含共享的 `extra` 覆盖。
+`Serif base` 只统计明确归类到对应基础族的来源，不包含按目标族拆分的 `extra` 覆盖。
 
 | 样式 | Sans + extra | Sans base | Serif + extra | Serif base | Mono |
 |------|-------------|------|--------------|-------|------|
-| `full` | 159525 (99.934%) | 143885 (90.138%) | 159525 (99.934%) | 58469 (36.627%) | 159430 (99.874%) |
+| `full` | 159523 (99.932%) | 143885 (90.138%) | 159525 (99.934%) | 58469 (36.627%) | 159430 (99.874%) |
 | `regular` | 96293 (60.323%) | 70855 (44.388%) | 96293 (60.323%) | 58469 (36.627%) | 96029 (60.157%) |
 | `bold` | 55727 (34.910%) | 54588 (34.197%) | 55727 (34.910%) | 50494 (31.630%) | 55308 (34.647%) |
 | `italic` | 3164 (1.982%) | 3086 (1.933%) | 3164 (1.982%) | 3000 (1.879%) | 3103 (1.944%) |
@@ -104,7 +103,6 @@ uninoto 按样式合并静态 TTF/OTF 字体，并排除变量字体。每个输
 | [Kanchenjunga](https://github.com/silnrsi/font-kanchenjunga) | Kirat Rai 文字 | OFL 1.1 |
 | [Kedebideri](https://software.sil.org/kedebideri/) | Zaghawa Beria 文字 | OFL 1.1 |
 | [Fairfax HD](https://www.kreativekorp.com/software/fonts/fairfaxhd/) | 多种 UCSUR 及学术字符 | OFL 1.1 |
-| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` 中空白字符和不可见码点的诊断提示字形 | OFL 1.1 |
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | 契丹小字 | OFL 1.1 |
 | [Noto Serif Dives Akuru](https://github.com/notofonts/dives-akuru) | Dives Akuru 文字 | OFL 1.1 |
 | [Noto Gurung Khema](https://github.com/notofonts/gurung-khema) | Gurung Khema 文字，从上游 SFD 源码构建 | OFL 1.1 |
@@ -152,7 +150,7 @@ pypy3 src/merge-all.py
 合并完成后，以下报告写入 `fonts/reports/<style>/`：
 
 - `sans-missing-visible.csv` / `serif-missing-visible.csv` / `mono-missing-visible.csv`：合并后仍缺失的可见码点
-- `sans-missing-visible-without_extra.csv` / `serif-missing-visible-without_extra.csv`：不含 `uninoto_extra*` 补充的缺失码点
+- `sans-missing-visible-without_extra.csv` / `serif-missing-visible-without_extra.csv`：不含按目标族拆分的 extra 补充时的缺失码点
 
 ## 许可证
 
@@ -168,7 +166,7 @@ pypy3 src/merge-all.py
 
 所有源字体的许可证文本、许可证引用与来源声明收录在仓库根目录的 [LICENSE](./LICENSE) 文件中，包括：
 
-- **SIL Open Font License 1.1**（Noto 系列、多数 BabelStone script fonts、Padauk、Scheherazade New、Harmattan、Charis SIL、Doulos SIL、Junicode、Kanchenjunga、Kedebideri、Fairfax HD、Scriptwide Sans CJK、Cascadia Code、Unicode Last Resort 等）
+- **SIL Open Font License 1.1**（Noto 系列、多数 BabelStone script fonts、Padauk、Scheherazade New、Harmattan、Charis SIL、Doulos SIL、Junicode、Kanchenjunga、Kedebideri、Fairfax HD、Scriptwide Sans CJK、Cascadia Code 等）
 - **CC0 1.0 Universal**（Jigmo 字云）
 - **Arphic Public License**（BabelStone Han）
 - **Hanazono Font License**（HanaMinB、HanaMinC，亦可用 OFL 1.1）

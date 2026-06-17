@@ -90,7 +90,6 @@ pub fn load_font_data(
     style: FontStyleMode,
     family: FontFamilyMode,
     show_extra: bool,
-    show_last_resort: bool,
 ) -> Result<Vec<LoadedFont>, String> {
     let style_dir = root.join(style.folder());
     let font_dir = if style_dir.is_dir() {
@@ -103,10 +102,7 @@ pub fn load_font_data(
 
     let mut paths = matching_font_paths(&font_dir, family.prefix())?;
     if show_extra && family != FontFamilyMode::Mono {
-        paths.extend(matching_font_paths(&font_dir, "uninoto_extra")?);
-    }
-    if show_last_resort && style == FontStyleMode::Full {
-        paths.extend(matching_font_paths(&font_dir, "uninoto_last_resort")?);
+        paths.extend(matching_font_paths(&font_dir, family.extra_prefix())?);
     }
 
     if paths.is_empty() {
@@ -130,6 +126,16 @@ pub fn load_font_data(
     Ok(fonts)
 }
 
+impl FontFamilyMode {
+    fn extra_prefix(self) -> &'static str {
+        match self {
+            Self::Sans => "uninoto_sans_extra",
+            Self::Serif => "uninoto_serif_extra",
+            Self::Mono => "uninoto_mono_extra",
+        }
+    }
+}
+
 fn matching_font_paths(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>, String> {
     let entries = fs::read_dir(dir).map_err(|err| format!("{}: {err}", dir.display()))?;
     let mut paths: Vec<PathBuf> = entries
@@ -144,11 +150,24 @@ fn matching_font_paths(dir: &Path, prefix: &str) -> Result<Vec<PathBuf>, String>
             };
             let file_name = file_name.to_ascii_lowercase();
             let ext = ext.to_ascii_lowercase();
-            (ext == "ttf" || ext == "otf") && file_name.starts_with(prefix)
+            (ext == "ttf" || ext == "otf") && font_name_matches_prefix(&file_name, prefix)
         })
         .collect();
     paths.sort_by(|a, b| font_sort_key(a, prefix).cmp(&font_sort_key(b, prefix)));
     Ok(paths)
+}
+
+fn font_name_matches_prefix(file_name: &str, prefix: &str) -> bool {
+    let stem = file_name
+        .strip_suffix(".ttf")
+        .or_else(|| file_name.strip_suffix(".otf"))
+        .unwrap_or(file_name);
+    let Some(suffix) = stem.strip_prefix(prefix) else {
+        return false;
+    };
+    suffix.is_empty()
+        || suffix.chars().all(|ch| ch.is_ascii_digit())
+        || suffix.starts_with("_upper")
 }
 
 fn font_sort_key(path: &Path, prefix: &str) -> (u8, u32, String) {

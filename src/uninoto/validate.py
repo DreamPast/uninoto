@@ -7,8 +7,6 @@ from pathlib import Path
 from .font_io import list_font_files, read_font_codepoints
 from .merge import (
     category_from_ranges,
-    is_last_resort_fallback_codepoint,
-    last_resort_output_names,
     project_mergeable_codepoint_filter,
     read_unicode_data_ranges,
 )
@@ -25,7 +23,6 @@ def main() -> None:
     args = parser.parse_args()
     codepoint_filter = project_mergeable_codepoint_filter(Path(args.unicode_data))
     category_ranges = read_unicode_data_ranges(Path(args.unicode_data))
-    last_resort_names = set(last_resort_output_names())
     font_files = list_font_files(Path(args.fonts_dir))
     names = set(all_output_names())
     fonts = (
@@ -40,12 +37,6 @@ def main() -> None:
         for font in fonts:
             for cp in read_font_codepoints(font, lambda _cp: True):
                 category = category_from_ranges(cp, category_ranges) or "Cn"
-                if (
-                    font.name in last_resort_names
-                    and is_last_resort_fallback_codepoint(cp, category)
-                    and font.parent.name == "full"
-                ):
-                    continue
                 if not codepoint_filter(cp):
                     invalid += 1
                     writer.writerow(

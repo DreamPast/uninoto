@@ -3,19 +3,17 @@ from __future__ import annotations
 from typing import Literal
 
 Category = Literal["bmp", "upper", "upper1", "upper2"]
-FontFamily = Literal["sans", "serif", "mono", "extra", "last_resort"]
+FontFamily = Literal["sans", "serif", "mono", "extra"]
 FontStyle = Literal["regular", "bold", "italic", "bolditalic", "full"]
 
 MAX_RECOGNIZED_UPPER_OUTPUTS = 512
 MAX_RECOGNIZED_EXTRA_OUTPUTS = 512
-MAX_RECOGNIZED_LAST_RESORT_OUTPUTS = 512
 MAX_RECOGNIZED_SPLIT_OUTPUTS = 512
 FONT_FAMILIES: tuple[FontFamily, ...] = (
     "sans",
     "serif",
     "mono",
     "extra",
-    "last_resort",
 )
 FONT_STYLES: tuple[FontStyle, ...] = (
     "regular",
@@ -31,11 +29,18 @@ EXTRA_OUTPUT_NAMES = (
         for index in range(1, MAX_RECOGNIZED_EXTRA_OUTPUTS + 1)
     ),
 )
-LAST_RESORT_OUTPUT_NAMES = (
-    "uninoto_last_resort.ttf",
+SANS_EXTRA_OUTPUT_NAMES = (
+    "uninoto_sans_extra.ttf",
     *(
-        f"uninoto_last_resort{index}.ttf"
-        for index in range(1, MAX_RECOGNIZED_LAST_RESORT_OUTPUTS + 1)
+        f"uninoto_sans_extra{index}.ttf"
+        for index in range(1, MAX_RECOGNIZED_EXTRA_OUTPUTS + 1)
+    ),
+)
+SERIF_EXTRA_OUTPUT_NAMES = (
+    "uninoto_serif_extra.ttf",
+    *(
+        f"uninoto_serif_extra{index}.ttf"
+        for index in range(1, MAX_RECOGNIZED_EXTRA_OUTPUTS + 1)
     ),
 )
 LEGACY_EXTRA_OUTPUT_NAMES = (
@@ -53,7 +58,6 @@ FAMILY_PREFIX: dict[FontFamily, str] = {
     "serif": "uninoto_serif",
     "mono": "uninoto_mono",
     "extra": "uninoto_extra",
-    "last_resort": "uninoto_last_resort",
 }
 
 
@@ -74,12 +78,6 @@ def output_name_for(family: FontFamily, category: str) -> str:
         if category == "upper2":
             return EXTRA_OUTPUT_NAMES[2]
         return f"uninoto_extra_{category}.ttf"
-    if family == "last_resort":
-        if category == "bmp":
-            return LAST_RESORT_OUTPUT_NAMES[0]
-        if category.isdecimal():
-            return f"uninoto_last_resort{category}.ttf"
-        return f"uninoto_last_resort_{category}.ttf"
     prefix = FAMILY_PREFIX[family]
     if category == "bmp":
         return f"{prefix}.ttf"
@@ -109,7 +107,8 @@ def all_output_names() -> list[str]:
         *(output_name_for("mono", c) for c in split_categories),
         *(output_name_for("mono", c) for c in upper_categories),
         *EXTRA_OUTPUT_NAMES,
-        *LAST_RESORT_OUTPUT_NAMES,
+        *SANS_EXTRA_OUTPUT_NAMES,
+        *SERIF_EXTRA_OUTPUT_NAMES,
     ]
 
 
@@ -119,7 +118,7 @@ def parse_font_family(value: str | None, option_name: str = "family") -> FontFam
     if value == "serief":
         return "serif"
     raise ValueError(
-        f"invalid {option_name}: {value or '<missing>'} (expected sans, serif, mono, extra, or last_resort)"
+        f"invalid {option_name}: {value or '<missing>'} (expected sans, serif, mono, or extra)"
     )
 
 

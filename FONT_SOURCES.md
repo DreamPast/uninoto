@@ -12,13 +12,10 @@ filters in `src/uninoto/font_io.py` and the family routing logic in
    or the legacy spelling `serief`.
 3. `mono` uses mono sources first, then non-serif sources with normalized advance
    widths.
-4. `extra` uses neutral sources that are not clearly sans or serif, plus the
-   coverage difference between clearly classified sans and serif sources.
+4. Directional `extra` outputs use neutral sources plus the opposite family only
+   for codepoints missing from the target family.
 5. Color emoji fonts with empty outline glyphs are not accepted as coverage
    sources; `NotoEmoji-Regular.ttf` is the accepted Noto Emoji source.
-6. `LastResort-Regular.ttf` is not accepted as ordinary visible-character
-   coverage. It is used only as a special `full`/`last_resort` diagnostic source for
-   non-blank invisible codepoints.
 
 ## Sans Sources
 
@@ -81,10 +78,10 @@ file names contain explicit serif signals, including the legacy spelling
 ## Extra Sources
 
 The following neutral sources are routed to `extra` when their discovered file
-paths or file names do not clearly identify them as sans, serif, or mono. `extra`
-also receives codepoints covered by only one of the clearly classified sans or
-serif families so `sans + extra` and `serif + extra` align. The order below
-follows the downloader order for the neutral source portion. Some fonts listed
+paths or file names do not clearly identify them as sans, serif, or mono.
+Directional extra outputs also receive codepoints covered by the opposite
+clearly classified family when the target family does not cover them. The order
+below follows the downloader order for the neutral source portion. Some fonts listed
 here are typographically serif or sans-like, but the program treats them as
 neutral because their accepted file paths do not explicitly say `sans` or
 `serif`.
@@ -168,15 +165,6 @@ neutral because their accepted file paths do not explicitly say `sans` or
 18. **Fairfax HD**
     Source: `fairfaxhd.zip`.
     Purpose: UCSUR and scholarly character coverage.
-
-19. **Unicode Last Resort**
-    Source: `LastResort-Regular.ttf` from `unicode-org/last-resort-font`
-    release `17.000`.
-    Purpose: `full`/`last_resort` diagnostic prompts for non-blank invisible
-    codepoints (`Cc`, `Cf`, `Cs`, `Co`, and `Cn`). These glyphs identify the
-    codepoint's Unicode block/range or special source class, such as Private
-    Use, surrogate, unassigned, or noncharacter. They are not routed as visible
-    character coverage.
 
 ## Mono And Reference Sources
 

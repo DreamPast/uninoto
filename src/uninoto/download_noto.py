@@ -126,10 +126,6 @@ FALLBACK_ITEMS: tuple[tuple[str, Path], ...] = (
         Path("fallback/fairfaxhd.zip"),
     ),
     (
-        "https://github.com/unicode-org/last-resort-font/releases/download/17.000/LastResort-Regular.ttf",
-        Path("fallback/LastResort/LastResort-Regular.ttf"),
-    ),
-    (
         "https://raw.githubusercontent.com/notofonts/ol-onal/main/sources/NotoSerifOlOnal.sfd",
         Path("fallback/NotoSourceBuilds/NotoSerifOlOnal.sfd"),
     ),

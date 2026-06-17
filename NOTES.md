@@ -1,15 +1,5 @@
 # NOTES.md
 
-## Special Diagnostic Sources
-
-- **Unicode Last Resort**
-  - Source: `unicode-org/last-resort-font`, release `17.000`, `LastResort-Regular.ttf`.
-  - License: SIL Open Font License 1.1.
-  - Decision: accepted only as a diagnostic fallback source for the `full` `last_resort` output.
-  - Use: maps non-blank invisible codepoints in `Cc`, `Cf`, `Cs`, `Co`, and `Cn` to Unicode Last Resort prompt glyphs. These glyphs identify the relevant Unicode block/range or special source class, such as Private Use, High/Low Surrogate, unassigned codepoints, or noncharacters.
-  - Reason: some systems render control characters and other invisible codepoints as nothing, which can hide data-quality or encoding problems. Putting Last Resort prompts in `full/uninoto_last_resort.ttf` helps users notice and identify potential hidden characters while preserving normal visible-character fallback behavior.
-  - Guardrail: do not use Last Resort as ordinary visible-character coverage. It remains rejected for sans/serif/mono and for visible script-specific glyph coverage because it provides block/source indicators rather than real script glyphs.
-
 ## Investigated Sources With No `full` Non-Mono Coverage Gain
 
 - **Noto Syriac release zips**

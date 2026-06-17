@@ -7,7 +7,7 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 ## Font Loading
 
 - Merged fonts are loaded from the selected `fonts/merged/<style>` folder at runtime.
-- `extra` and `last_resort` fallback outputs are optional UI toggles; `last_resort` is enabled only for the `Full` style.
+- Directional `extra` fallback outputs are optional UI toggles.
 - Font data is stored in `ViewerApp.font_data` as `Vec<(String, Vec<u8>)>`.
 - egui built-in fonts are removed — only uninoto fonts are registered.
 - Font families are registered fresh when the family selector changes (deferred via `needs_reload` flag to respect `set_fonts`'s deferred activation).
@@ -16,9 +16,9 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 
 | Family | Font Files |
 |--------|-----------|
-| Sans   | `uninoto_sans*` plus optional `uninoto_extra*` and `uninoto_last_resort*` |
-| Serif  | `uninoto_serif*` plus optional `uninoto_extra*` and `uninoto_last_resort*` |
-| Mono   | `uninoto_mono*` plus optional `uninoto_last_resort*` |
+| Sans   | `uninoto_sans*` plus optional `uninoto_sans_extra*` |
+| Serif  | `uninoto_serif*` plus optional `uninoto_serif_extra*` |
+| Mono   | `uninoto_mono*` |
 
 ## CMap Parsing
 
@@ -46,7 +46,7 @@ GUI application for browsing merged uninoto font glyphs. Built with egui/eframe.
 - **Zoom**: `spin_box` widget (▼/▲ buttons + text input), step 0.25, range 0.5–3.0. Reads system DPI as initial value. NaN → reset to system default.
 - **Size**: `DragValue`, step 0.25, range 6–48. Controls glyph/table font size.
 - **Family**: Sans/Serif/Mono selector.
-- **Show**: Extra and Last Resort toggles; Last Resort is disabled outside Full style.
+- **Show**: Extra toggle.
 - **View**: List/Grid/Text mode selector.
 - **Jump to**: hex codepoint navigation (U+XXXX).
 - **Search**: filter by hex codepoint, character, or Unicode name.

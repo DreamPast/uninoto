@@ -38,7 +38,6 @@ pub(crate) struct ViewerApp {
     font_style: FontStyleMode,
     font_family: FontFamilyMode,
     show_extra: bool,
-    show_last_resort: bool,
     display_mode: DisplayMode,
     search: String,
     prev_search: String,
@@ -63,16 +62,9 @@ impl ViewerApp {
         let font_style = FontStyleMode::Full;
         let font_family = FontFamilyMode::Sans;
         let show_extra = true;
-        let show_last_resort = false;
         let font_root = resolve_font_root(&font_root_text);
         let mut load_error = None;
-        let font_data = match load_font_data(
-            &font_root,
-            font_style,
-            font_family,
-            show_extra,
-            show_last_resort,
-        ) {
+        let font_data = match load_font_data(&font_root, font_style, font_family, show_extra) {
             Ok(font_data) => font_data,
             Err(err) => {
                 load_error = Some(err);
@@ -90,7 +82,6 @@ impl ViewerApp {
             font_style,
             font_family,
             show_extra,
-            show_last_resort,
             display_mode: DisplayMode::List,
             search: String::new(),
             prev_search: String::new(),
@@ -117,7 +108,6 @@ impl ViewerApp {
             self.font_style,
             self.font_family,
             self.show_extra,
-            self.show_last_resort,
         ) {
             Ok(font_data) => {
                 self.font_data = font_data;
@@ -250,9 +240,6 @@ impl ViewerApp {
                 }
                 ui.separator();
                 ui.checkbox(&mut self.show_extra, "Extra");
-                ui.add_enabled_ui(self.font_style == FontStyleMode::Full, |ui| {
-                    ui.checkbox(&mut self.show_last_resort, "Last Resort");
-                });
             });
             ui.horizontal(|ui: &mut egui::Ui| {
                 self.show_jump_bar(ui);
@@ -563,18 +550,13 @@ impl App for ViewerApp {
         let old_style = self.font_style;
         let old_family = self.font_family;
         let old_show_extra = self.show_extra;
-        let old_show_last_resort = self.show_last_resort;
 
         self.show_top_panel(ui);
-        if self.font_style != FontStyleMode::Full {
-            self.show_last_resort = false;
-        }
         self.handle_grid_copy_shortcut(ui);
 
         if self.font_style != old_style
             || self.font_family != old_family
             || self.show_extra != old_show_extra
-            || self.show_last_resort != old_show_last_resort
         {
             self.begin_reload(ui.ctx());
         }

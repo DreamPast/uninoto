@@ -16,8 +16,8 @@ document has already tried its preferred fonts.
 
 ## Font outputs
 
-The build writes `sans`, `serif`, `mono`, shared `extra` fallback outputs, and
-a separate `last_resort` diagnostic output.
+The build writes `sans`, `serif`, `mono`, and directional `extra` fallback
+outputs.
 CJK ideographs use Simplified Chinese forms where those forms are available.
 
 Font sources are routed by explicit family signals in their path or file name:
@@ -25,8 +25,8 @@ Font sources are routed by explicit family signals in their path or file name:
 - `sans` uses sources that clearly identify themselves as sans, such as Noto Sans or Sans CJK sources.
 - `serif` uses sources that clearly identify themselves as serif (including the legacy `serief` spelling).
 - `mono` uses mono sources first, then non-serif sources with normalized advance widths.
-- `extra` uses neutral sources that are not clearly sans or serif, and also stores the coverage difference between clearly classified sans and serif sources so the two fallback chains align.
-- `last_resort` stores Unicode Last Resort diagnostic prompts for whitespace and invisible codepoints in the `full` style only.
+- `sans_extra` uses neutral and serif-selected sources for codepoints missing from `sans`.
+- `serif_extra` uses neutral and sans-selected sources for codepoints missing from `serif`.
 
 Outputs are grouped by style under `fonts/merged/<style>/`. The default build
 creates `regular`; additional supported style builds are `bold`, `italic`,
@@ -40,16 +40,12 @@ most 65,535 glyphs:
 - When a family does not fit in one TTF, it is split directly into numbered files such as `uninoto_sans1.ttf`, `uninoto_sans2.ttf`, and so on
 - Empty split buckets are skipped
 
-`uninoto_extra.ttf` contains shared fallback coverage for `sans` and `serif`:
-neutral sources plus the coverage difference between clearly classified sans and
-serif sources.
-
-The `full` style's `last_resort` output contains Unicode Last Resort prompts
-for whitespace codepoints plus invisible codepoints (`Cc`, `Cf`, `Cs`, `Co`, and
-`Cn`). These prompts are diagnostic glyphs: they help reveal spaces, control
-characters, private-use characters, surrogate codepoints, unassigned codepoints,
-and noncharacters on systems that would otherwise render them as blank. They are
-not used for visible character coverage and are kept separate from `extra`.
+Use uninoto near the end of a font fallback chain as a visible prompt for missing
+fonts or invalid glyph coverage. Its generated `.notdef` glyph is a visible
+Noto-style fallback box, so text that still cannot be represented is less likely
+to disappear silently. If you need a complete final fallback prompt font that
+identifies Unicode blocks or special codepoint classes, see the
+[Unicode Last Resort](https://github.com/unicode-org/last-resort-font) project.
 
 The `mono` family uses normalized advance widths that match the current Noto
 mono sources: half-width 600 and full-width 1000.
@@ -70,20 +66,21 @@ Output structure:
 | `fonts/merged/<style>/uninoto_serif<N>.ttf` | Serif bucket N | Written as needed when Serif exceeds the glyph limit |
 | `fonts/merged/<style>/uninoto_mono.ttf` | Mono | Contains all Mono codepoints when they fit |
 | `fonts/merged/<style>/uninoto_mono<N>.ttf` | Mono bucket N | Written as needed when Mono exceeds the glyph limit |
-| `fonts/merged/<style>/uninoto_extra.ttf` | Neutral shared fallback | Contains all extra codepoints when they fit |
-| `fonts/merged/<style>/uninoto_extra<N>.ttf` | Extra bucket N | Written as needed when extra output exceeds the glyph limit |
-| `fonts/merged/full/uninoto_last_resort.ttf` | Last Resort diagnostics | Contains whitespace and invisible-codepoint prompts |
+| `fonts/merged/<style>/uninoto_sans_extra.ttf` | Sans extra fallback | Contains all sans extra codepoints when they fit |
+| `fonts/merged/<style>/uninoto_sans_extra<N>.ttf` | Sans extra bucket N | Written as needed when sans extra exceeds the glyph limit |
+| `fonts/merged/<style>/uninoto_serif_extra.ttf` | Serif extra fallback | Contains all serif extra codepoints when they fit |
+| `fonts/merged/<style>/uninoto_serif_extra<N>.ttf` | Serif extra bucket N | Written as needed when serif extra exceeds the glyph limit |
 
-Coverage as of the 2026-06-16 merge against Unicode 17 visible codepoints
+Coverage as of the 2026-06-17 merge against Unicode 17 visible codepoints
 (159,631 total):
 
 The `Sans + extra` and `Serif + extra` columns are the effective fallback-chain
 coverage. The bare `Sans base` and `Serif base` columns show only clearly
-classified base family sources, excluding shared `extra` coverage.
+classified base family sources, excluding directional `extra` coverage.
 
 | Style | Sans + extra | Sans base | Serif + extra | Serif base | Mono |
 |-------|-------------|------|--------------|-------|------|
-| `full` | 159,525 (99.934%) | 143,885 (90.138%) | 159,525 (99.934%) | 58,469 (36.627%) | 159,430 (99.874%) |
+| `full` | 159,523 (99.932%) | 143,885 (90.138%) | 159,525 (99.934%) | 58,469 (36.627%) | 159,430 (99.874%) |
 | `regular` | 96,293 (60.323%) | 70,855 (44.388%) | 96,293 (60.323%) | 58,469 (36.627%) | 96,029 (60.157%) |
 | `bold` | 55,727 (34.910%) | 54,588 (34.197%) | 55,727 (34.910%) | 50,494 (31.630%) | 55,308 (34.647%) |
 | `italic` | 3,164 (1.982%) | 3,086 (1.933%) | 3,164 (1.982%) | 3,000 (1.879%) | 3,103 (1.944%) |
@@ -133,7 +130,6 @@ every possible character.
 | [Kanchenjunga](https://github.com/silnrsi/font-kanchenjunga) | Kirat Rai script | OFL 1.1 |
 | [Kedebideri](https://software.sil.org/kedebideri/) | Zaghawa Beria script | OFL 1.1 |
 | [Fairfax HD](https://www.kreativekorp.com/software/fonts/fairfaxhd/) | UCSUR and scholarly characters | OFL 1.1 |
-| [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) | `full`/`last_resort` diagnostic prompts for whitespace and invisible codepoints | OFL 1.1 |
 | [Khitan Small Script](https://github.com/notofonts/khitan-small-script) | Khitan small script | OFL 1.1 |
 | [Noto Serif Dives Akuru](https://github.com/notofonts/dives-akuru) | Dives Akuru script | OFL 1.1 |
 | [Noto Gurung Khema](https://github.com/notofonts/gurung-khema) | Gurung Khema script, built from upstream SFD source | OFL 1.1 |
@@ -187,7 +183,7 @@ pypy3 src/merge-all.py
 After merging, reports are written to `fonts/reports/<style>/`:
 
 - `sans-missing-visible.csv` / `serif-missing-visible.csv` / `mono-missing-visible.csv`: visible codepoints still uncovered after merging
-- `sans-missing-visible-without_extra.csv` / `serif-missing-visible-without_extra.csv`: missing codepoints excluding `uninoto_extra*` coverage
+- `sans-missing-visible-without_extra.csv` / `serif-missing-visible-without_extra.csv`: missing codepoints excluding directional extra coverage
 
 ## License
 
@@ -206,7 +202,7 @@ repository's license inventory.
 
 License texts, license references, and source notices for the source fonts are included in [LICENSE](./LICENSE):
 
-- **SIL Open Font License 1.1** (Noto families, most BabelStone script fonts, Padauk, Scheherazade New, Harmattan, Charis SIL, Doulos SIL, Junicode, Kanchenjunga, Kedebideri, Fairfax HD, Scriptwide Sans CJK, Cascadia Code, Unicode Last Resort, etc.)
+- **SIL Open Font License 1.1** (Noto families, most BabelStone script fonts, Padauk, Scheherazade New, Harmattan, Charis SIL, Doulos SIL, Junicode, Kanchenjunga, Kedebideri, Fairfax HD, Scriptwide Sans CJK, Cascadia Code, etc.)
 - **CC0 1.0 Universal** (Jigmo)
 - **Arphic Public License** (BabelStone Han)
 - **GlyphWiki License** (HanaMinB, HanaMinC)

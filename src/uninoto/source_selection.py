@@ -147,8 +147,6 @@ def requested_family_rank(path: Path, family: FontFamily) -> int:
     source = source_family(path)
     if family == "extra":
         return 0 if source == "neutral" else 2
-    if family == "last_resort":
-        return 99
     if family == "mono":
         if source == "mono":
             return 0
@@ -170,8 +168,6 @@ def source_family_eligible(path: Path, family: FontFamily) -> bool:
         return source != "serif"
     if family == "extra":
         return source == "neutral"
-    if family == "last_resort":
-        return False
     return source == family
 
 

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import copy
 import csv as csv_lib
-import shutil
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,7 +14,6 @@ from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
 from fontTools.ttLib import TTFont, newTable
 from fontTools.ttLib.scaleUpem import scale_upem
-from fontTools.ttLib.tables._c_m_a_p import CmapSubtable as FontToolsCmapSubtable
 from fontTools.ttLib.tables._g_l_y_f import Glyph
 
 from .font_io import FontInfo, discover_fonts, list_font_files, read_font_codepoints
@@ -24,10 +21,11 @@ from .planes import (
     EXTRA_OUTPUT_NAMES,
     FONT_FAMILIES,
     FONT_STYLES,
-    LAST_RESORT_OUTPUT_NAMES,
     LEGACY_EXTRA_OUTPUT_NAMES,
     MAX_RECOGNIZED_SPLIT_OUTPUTS,
     MAX_RECOGNIZED_UPPER_OUTPUTS,
+    SANS_EXTRA_OUTPUT_NAMES,
+    SERIF_EXTRA_OUTPUT_NAMES,
     Category,
     FontFamily,
     FontStyle,
@@ -54,8 +52,6 @@ SPLIT_BUCKET_CODEPOINT_LIMIT = TTF_GLYPH_LIMIT - 2048
 EXTRA_BUCKET_CODEPOINT_LIMIT = TTF_GLYPH_LIMIT - 1
 PRESERVE_METADATA_CODEPOINT_LIMIT = 8000
 PLACEHOLDER_GLYPHS = {".notdef", ".null", "nonmarkingreturn"}
-LAST_RESORT_SOURCE = Path("fallback/LastResort/LastResort-Regular.ttf")
-LAST_RESORT_FALLBACK_CATEGORIES = {"Cc", "Cf", "Cs", "Co", "Cn"}
 LAYOUT_GLYPH_REFERENCE_TABLES = ("BASE", "GDEF", "GPOS", "GSUB", "JSTF")
 PLANE_1_END = 0x1FFFF
 REPORT_FAMILIES: tuple[FontFamily, ...] = ("sans", "serif", "mono")
@@ -75,7 +71,6 @@ WIN_METRICS_BY_FAMILY: dict[FontFamily | None, tuple[int, int]] = {
     "serif": (1069, 389),
     "mono": (1229, 389),
     "extra": (1124, 395),
-    "last_resort": (1124, 395),
     None: (1124, 395),
 }
 USE_TYPO_METRICS = 1 << 7
@@ -738,144 +733,6 @@ def _ensure_notdef_outline(font: TTFont) -> None:
     hmtx.metrics[".notdef"] = (max(advance_width, NOTDEF_DEFAULT_WIDTH), glyph.xMin)
 
 
-def _ensure_cmap_subtable(font: TTFont, format_: int) -> CmapSubtable:
-    cmap_table = cast(CmapTable, font["cmap"])
-    for table in cmap_table.tables:
-        if getattr(table, "format", None) == format_:
-            return table
-    table = FontToolsCmapSubtable.newSubtable(format_)
-    if format_ == 12:
-        table.platformID = 3
-        table.platEncID = 10
-    else:
-        table.platformID = 3
-        table.platEncID = 1
-    table.language = 0
-    table.cmap = {}
-    cmap_table.tables.append(table)
-    return table
-
-
-def _last_resort_component_closure(source_font: TTFont, roots: set[str]) -> set[str]:
-    if "glyf" not in source_font:
-        return set(roots)
-    glyf = cast(GlyfTable, source_font["glyf"])
-    needed = set(roots)
-    stack = list(roots)
-    while stack:
-        glyph_name = stack.pop()
-        if glyph_name not in glyf.glyphs:
-            continue
-        glyph = glyf[glyph_name]
-        if not glyph.isComposite():
-            continue
-        for component in glyph.components:
-            component_name = component.glyphName
-            if component_name not in needed:
-                needed.add(component_name)
-                stack.append(component_name)
-    return needed
-
-
-def _copy_last_resort_glyphs(
-    source_font: TTFont, target_font: TTFont, glyph_names: set[str]
-) -> int:
-    if "glyf" not in source_font or "hmtx" not in source_font:
-        return 0
-    if "glyf" not in target_font or "hmtx" not in target_font:
-        return 0
-    source_glyf = cast(GlyfTable, source_font["glyf"])
-    source_hmtx = cast(HmtxTable, source_font["hmtx"])
-    target_glyf = cast(GlyfTable, target_font["glyf"])
-    target_hmtx = cast(HmtxTable, target_font["hmtx"])
-    target_order = cast(list[str], target_font.getGlyphOrder())
-    target_names = set(target_order)
-    copied = 0
-    for glyph_name in sorted(_last_resort_component_closure(source_font, glyph_names)):
-        if glyph_name not in source_glyf.glyphs:
-            continue
-        if glyph_name not in target_names:
-            target_order.append(glyph_name)
-            target_names.add(glyph_name)
-        target_glyf.glyphs[glyph_name] = copy.deepcopy(source_glyf.glyphs[glyph_name])
-        if glyph_name in source_hmtx.metrics:
-            target_hmtx.metrics[glyph_name] = source_hmtx.metrics[glyph_name]
-        else:
-            target_hmtx.metrics[glyph_name] = (NOTDEF_DEFAULT_WIDTH, 0)
-        copied += 1
-    target_font.setGlyphOrder(target_order)
-    target_glyf.glyphOrder = list(target_order)
-    return copied
-
-
-def is_last_resort_fallback_codepoint(codepoint: int, category: str) -> bool:
-    try:
-        if chr(codepoint).isspace():
-            return True
-    except ValueError:
-        return False
-    return category in LAST_RESORT_FALLBACK_CATEGORIES
-
-
-def last_resort_fallback_codepoints(unicode_data: Path) -> set[int]:
-    codepoints: set[int] = set()
-    ranges = read_unicode_data_ranges(unicode_data)
-    for codepoint in range(0x110000):
-        category = category_from_ranges(codepoint, ranges) or "Cn"
-        if not is_last_resort_fallback_codepoint(codepoint, category):
-            continue
-        codepoints.add(codepoint)
-    return codepoints
-
-
-def add_last_resort_fallbacks_to_font(
-    path: Path, source: Path, codepoints: set[int], replace_cmap: bool = False
-) -> int:
-    if not source.exists():
-        raise FileNotFoundError(f"missing Unicode Last Resort source: {source}")
-    source_font = TTFont(source)
-    font = TTFont(path)
-    try:
-        if replace_cmap and "cmap" in font:
-            cast(CmapTable, font["cmap"]).tables = []
-        source_cmap = source_font.getBestCmap() or {}
-        mapping = {
-            codepoint: glyph_name
-            for codepoint, glyph_name in source_cmap.items()
-            if codepoint in codepoints
-        }
-        copied = _copy_last_resort_glyphs(source_font, font, set(mapping.values()))
-        if mapping:
-            cmap12 = _ensure_cmap_subtable(font, 12)
-            cmap12.cmap.update(mapping)
-            cmap4 = _ensure_cmap_subtable(font, 4)
-            cmap4.cmap.update(
-                {
-                    codepoint: glyph_name
-                    for codepoint, glyph_name in mapping.items()
-                    if codepoint <= 0xFFFF
-                }
-            )
-        if "maxp" in font:
-            cast(MaxpTable, font["maxp"]).recalc(font)
-        if mapping or copied:
-            font.save(path)
-        return len(mapping)
-    finally:
-        font.close()
-        source_font.close()
-
-
-def add_last_resort_fallbacks_to_output(
-    output: Path, source: Path, codepoints: set[int], replace_cmap: bool = False
-) -> None:
-    total = add_last_resort_fallbacks_to_font(
-        output, source, codepoints, replace_cmap=replace_cmap
-    )
-    if codepoints:
-        print(f"last resort fallback glyphs: added {total} mappings to {output.name}")
-
-
 def _composite_component_closure(font: TTFont, roots: set[str]) -> set[str]:
     if "glyf" not in font:
         return set(roots)
@@ -1014,6 +871,32 @@ def _write_merged_font(
         font.close()
 
 
+def _restrict_output_codepoints(output: Path, allowed_codepoints: set[int]) -> int:
+    font = TTFont(output)
+    try:
+        if "cmap" not in font:
+            return 0
+        removed = 0
+        cmap_table = cast(CmapTable, font["cmap"])
+        cmap_table.tables = [
+            table for table in cmap_table.tables if getattr(table, "format", None) != 14
+        ]
+        for table in cmap_table.tables:
+            old_count = len(table.cmap)
+            table.cmap = {
+                codepoint: glyph_name
+                for codepoint, glyph_name in table.cmap.items()
+                if codepoint in allowed_codepoints
+            }
+            removed += old_count - len(table.cmap)
+        if not removed:
+            return 0
+        font.save(output)
+        return removed
+    finally:
+        font.close()
+
+
 def _merge_selected_codepoints_once(
     label: str,
     output_name: str,
@@ -1071,9 +954,14 @@ def _merge_selected_codepoints_once(
                 style,
                 False,
             )
+            preserve_source_metadata = False
+    removed_cmap = _restrict_output_codepoints(
+        output, {item.codepoint for item in selected}
+    )
     actual = read_font_codepoints(output, codepoint_filter)
+    removed = f", removed-cmap={removed_cmap}" if removed_cmap else ""
     print(
-        f"wrote {output} ({glyphs} glyphs, {len(actual)}/{len(selected)} codepoints, {len(codepoints_by_font)} subsets, pruned={pruned})"
+        f"wrote {output} ({glyphs} glyphs, {len(actual)}/{len(selected)} codepoints, {len(codepoints_by_font)} subsets, pruned={pruned}{removed})"
     )
     return WriteResult(
         glyphs=glyphs,
@@ -1294,24 +1182,51 @@ def merge_extra(
         item.codepoint: item
         for item in selected_output_codepoints(fonts, "extra", style)
     }
-    selected_by_codepoint = {
-        cp: item for cp, item in neutral.items() if cp not in sans or cp not in serif
-    }
-    selected_by_codepoint.update(
-        {cp: item for cp, item in sans.items() if cp not in serif and cp not in neutral}
-    )
-    selected_by_codepoint.update(
+    sans_extra = {cp: item for cp, item in neutral.items() if cp not in sans}
+    sans_extra.update(
         {cp: item for cp, item in serif.items() if cp not in sans and cp not in neutral}
     )
-    selected = [selected_by_codepoint[cp] for cp in sorted(selected_by_codepoint)]
+    serif_extra = {cp: item for cp, item in neutral.items() if cp not in serif}
+    serif_extra.update(
+        {cp: item for cp, item in sans.items() if cp not in serif and cp not in neutral}
+    )
     only_sans = len([cp for cp in sans if cp not in serif])
     only_serif = len([cp for cp in serif if cp not in sans])
-    neutral_only = len([cp for cp in neutral if cp not in sans or cp not in serif])
     print(
         f"sans/serif coverage check: sans={len(sans)}, serif={len(serif)}, "
-        f"neutral-extra={neutral_only}, only-sans={only_sans}, only-serif={only_serif}"
+        f"neutral={len(neutral)}, only-sans={only_sans}, only-serif={only_serif}, "
+        f"sans-extra={len(sans_extra)}, serif-extra={len(serif_extra)}"
     )
     remove_extra_output_fonts(output_root)
+    merge_extra_outputs(
+        "sans_extra",
+        SANS_EXTRA_OUTPUT_NAMES,
+        [sans_extra[cp] for cp in sorted(sans_extra)],
+        output_root,
+        codepoint_filter,
+        style,
+        preserve_source_metadata,
+    )
+    merge_extra_outputs(
+        "serif_extra",
+        SERIF_EXTRA_OUTPUT_NAMES,
+        [serif_extra[cp] for cp in sorted(serif_extra)],
+        output_root,
+        codepoint_filter,
+        style,
+        preserve_source_metadata,
+    )
+
+
+def merge_extra_outputs(
+    label: str,
+    output_names: tuple[str, ...],
+    selected: list[SelectedCodepoint],
+    output_root: Path,
+    codepoint_filter: CodepointFilter,
+    style: FontStyle,
+    preserve_source_metadata: bool = False,
+) -> None:
     preserve_metadata = preserve_source_metadata and style != "full"
     should_try_single = len(selected) <= EXTRA_BUCKET_CODEPOINT_LIMIT and not (
         preserve_metadata
@@ -1325,8 +1240,8 @@ def merge_extra(
     if should_try_single:
         try:
             _merge_selected_codepoints_once(
-                "extra",
-                EXTRA_OUTPUT_NAMES[0],
+                label,
+                output_names[0],
                 selected,
                 output_root,
                 False,
@@ -1335,7 +1250,7 @@ def merge_extra(
                 preserve_metadata,
                 False,
             )
-            for stale_name in EXTRA_OUTPUT_NAMES[1:]:
+            for stale_name in output_names[1:]:
                 (output_root / stale_name).unlink(missing_ok=True)
             return
         except Exception as exc:
@@ -1343,43 +1258,23 @@ def merge_extra(
                 raise
             if _is_capacity_error(exc):
                 print(
-                    f"extra does not fit with source metadata; splitting outputs ({exc})"
+                    f"{label} does not fit with source metadata; splitting outputs ({exc})"
                 )
             elif preserve_metadata:
                 print(
-                    f"extra could not preserve source metadata in one output; splitting source groups ({exc})"
+                    f"{label} could not preserve source metadata in one output; splitting source groups ({exc})"
                 )
             else:
                 raise
     merge_selected_codepoints_with_split(
-        "extra",
-        split_output_names("extra"),
+        label,
+        list(output_names[1:]),
         selected,
         output_root,
         False,
         codepoint_filter,
         style,
         preserve_source_metadata,
-    )
-
-
-def merge_last_resort(
-    output_root: Path,
-    style: FontStyle,
-    last_resort_source: Path | None,
-    last_resort_codepoints: set[int] | None,
-) -> None:
-    remove_last_resort_output_fonts(output_root)
-    if style != "full":
-        print(f"skip last_resort: only full style writes Last Resort prompts")
-        return
-    if last_resort_source is None:
-        raise ValueError("last_resort source path was not provided")
-    output = output_root / LAST_RESORT_OUTPUT_NAMES[0]
-    output_root.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(last_resort_source, output)
-    add_last_resort_fallbacks_to_output(
-        output, last_resort_source, last_resort_codepoints or set(), replace_cmap=True
     )
 
 
@@ -1503,7 +1398,7 @@ def report_codepoint_filter(
 def merged_coverage_fonts(output_root: Path, family: FontFamily) -> list[Path]:
     family_names = family_output_names(family)
     names = set(
-        [*family_names, *extra_output_names()]
+        [*family_names, *extra_output_names_for_family(family)]
         if family in {"sans", "serif"}
         else family_names
     )
@@ -1527,7 +1422,7 @@ def collect_report_coverage(
     if extra_codepoints is None:
         return collect_merged_coverage(font_paths, codepoint_filter)
 
-    extra_names = set(extra_output_names())
+    extra_names = set(directional_extra_output_names())
     base_paths = [path for path in font_paths if path.name not in extra_names]
     extra_paths = [path for path in font_paths if path.name in extra_names]
     covered = collect_merged_coverage(base_paths, codepoint_filter)
@@ -1546,25 +1441,26 @@ def font_files_by_output_names(output_root: Path, names: set[str]) -> list[Path]
 def check_sans_serif_fallback_coverage(
     output_root: Path,
     codepoint_filter: CodepointFilter,
-    extra_codepoints: set[int],
+    sans_extra_codepoints: set[int],
+    serif_extra_codepoints: set[int],
 ) -> None:
     sans_names = {
         *family_output_names("sans"),
-        *extra_output_names(),
+        *extra_output_names_for_family("sans"),
     }
     serif_names = {
         *family_output_names("serif"),
-        *extra_output_names(),
+        *extra_output_names_for_family("serif"),
     }
     sans = collect_report_coverage(
         font_files_by_output_names(output_root, sans_names),
         codepoint_filter,
-        extra_codepoints,
+        sans_extra_codepoints,
     )
     serif = collect_report_coverage(
         font_files_by_output_names(output_root, serif_names),
         codepoint_filter,
-        extra_codepoints,
+        serif_extra_codepoints,
     )
     only_sans = [cp for cp in sans if cp not in serif]
     only_serif = [cp for cp in serif if cp not in sans]
@@ -1633,7 +1529,7 @@ def write_missing_visible_report_for_fonts(
 
 
 def selected_extra_report_codepoints(
-    options: Options, codepoint_filter: CodepointFilter
+    options: Options, codepoint_filter: CodepointFilter, family: FontFamily
 ) -> set[int]:
     style = options.styles[0]
     fonts = discover_fonts(options.input, codepoint_filter, style)
@@ -1644,11 +1540,17 @@ def selected_extra_report_codepoints(
     neutral = {
         item.codepoint for item in selected_output_codepoints(fonts, "extra", style)
     }
-    return {
-        *{cp for cp in neutral if cp not in sans or cp not in serif},
-        *{cp for cp in sans if cp not in serif and cp not in neutral},
-        *{cp for cp in serif if cp not in sans and cp not in neutral},
-    }
+    if family == "sans":
+        return {
+            *{cp for cp in neutral if cp not in sans},
+            *{cp for cp in serif if cp not in sans and cp not in neutral},
+        }
+    if family == "serif":
+        return {
+            *{cp for cp in neutral if cp not in serif},
+            *{cp for cp in sans if cp not in serif and cp not in neutral},
+        }
+    return set()
 
 
 def write_missing_visible_report(options: Options, family: FontFamily) -> None:
@@ -1657,7 +1559,7 @@ def write_missing_visible_report(options: Options, family: FontFamily) -> None:
     category_ranges = read_unicode_data_ranges(options.unicode_data)
     codepoint_filter = report_codepoint_filter(category_ranges, options.include_marks)
     extra_codepoints = (
-        selected_extra_report_codepoints(options, codepoint_filter)
+        selected_extra_report_codepoints(options, codepoint_filter, family)
         if family in {"sans", "serif"}
         else None
     )
@@ -1702,23 +1604,29 @@ def report_path_with_suffix(output: Path, family: FontFamily, suffix: str) -> Pa
 def remove_extra_output_fonts(output_root: Path) -> None:
     for name in (
         *EXTRA_OUTPUT_NAMES,
+        *SANS_EXTRA_OUTPUT_NAMES,
+        *SERIF_EXTRA_OUTPUT_NAMES,
         *LEGACY_EXTRA_OUTPUT_NAMES,
         *split_output_names("extra"),
     ):
         (output_root / name).unlink(missing_ok=True)
 
 
-def extra_output_names() -> list[str]:
-    return [EXTRA_OUTPUT_NAMES[0], *split_output_names("extra")]
+def directional_extra_output_names() -> list[str]:
+    return [
+        *EXTRA_OUTPUT_NAMES,
+        *SANS_EXTRA_OUTPUT_NAMES,
+        *SERIF_EXTRA_OUTPUT_NAMES,
+        *split_output_names("extra"),
+    ]
 
 
-def remove_last_resort_output_fonts(output_root: Path) -> None:
-    for name in (*LAST_RESORT_OUTPUT_NAMES, *split_output_names("last_resort")):
-        (output_root / name).unlink(missing_ok=True)
-
-
-def last_resort_output_names() -> list[str]:
-    return [LAST_RESORT_OUTPUT_NAMES[0], *split_output_names("last_resort")]
+def extra_output_names_for_family(family: FontFamily) -> list[str]:
+    if family == "sans":
+        return list(SANS_EXTRA_OUTPUT_NAMES)
+    if family == "serif":
+        return list(SERIF_EXTRA_OUTPUT_NAMES)
+    return []
 
 
 def remove_stale_extra_reports(options: Options) -> None:
@@ -1768,9 +1676,6 @@ def remove_family_merge_outputs(output_root: Path, family: FontFamily) -> None:
     if family == "extra":
         remove_extra_output_fonts(output_root)
         return
-    if family == "last_resort":
-        remove_last_resort_output_fonts(output_root)
-        return
     remove_family_output_fonts(output_root, family)
     remove_upper_output_fonts(output_root, family)
     remove_bmp_split_output_fonts(output_root, family)
@@ -1780,8 +1685,6 @@ def remove_family_merge_outputs(output_root: Path, family: FontFamily) -> None:
 def remove_family_reports(options: Options, family: FontFamily) -> None:
     if family == "extra":
         remove_stale_extra_reports(options)
-        return
-    if family == "last_resort":
         return
     if family not in REPORT_FAMILIES:
         return
@@ -1907,8 +1810,6 @@ def merge_family_outputs(
     output_root: Path,
     codepoint_filter: CodepointFilter,
     style: FontStyle,
-    last_resort_codepoints: set[int] | None = None,
-    last_resort_source: Path | None = None,
     preserve_source_metadata: bool = False,
 ) -> None:
     remove_family_merge_outputs(output_root, family)
@@ -1919,14 +1820,6 @@ def merge_family_outputs(
             codepoint_filter,
             style,
             preserve_source_metadata,
-        )
-        return
-    if family == "last_resort":
-        merge_last_resort(
-            output_root,
-            style,
-            last_resort_source,
-            last_resort_codepoints,
         )
         return
     bmp = selected_codepoints_for_category("bmp", fonts, family, style)
@@ -2079,9 +1972,17 @@ def write_style_reports(
         codepoint_filter = report_codepoint_filter(
             category_ranges, options.include_marks
         )
-        extra_codepoints = selected_extra_report_codepoints(options, codepoint_filter)
+        sans_extra_codepoints = selected_extra_report_codepoints(
+            options, codepoint_filter, "sans"
+        )
+        serif_extra_codepoints = selected_extra_report_codepoints(
+            options, codepoint_filter, "serif"
+        )
         check_sans_serif_fallback_coverage(
-            options.output, codepoint_filter, extra_codepoints
+            options.output,
+            codepoint_filter,
+            sans_extra_codepoints,
+            serif_extra_codepoints,
         )
 
 
@@ -2131,8 +2032,6 @@ def parse_args() -> Options:
 def main() -> None:
     options = parse_args()
     codepoint_filter = project_mergeable_codepoint_filter(options.unicode_data)
-    last_resort_codepoints = last_resort_fallback_codepoints(options.unicode_data)
-    last_resort_source = options.input / LAST_RESORT_SOURCE
     families: list[FontFamily] = (
         [options.family] if options.family is not None else list(FONT_FAMILIES)
     )
@@ -2150,8 +2049,6 @@ def main() -> None:
                 style_options.output,
                 codepoint_filter,
                 style,
-                last_resort_codepoints=last_resort_codepoints,
-                last_resort_source=last_resort_source,
             )
         write_style_reports(style_options, families)
 
