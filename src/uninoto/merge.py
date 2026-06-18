@@ -5,6 +5,7 @@ import csv as csv_lib
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -35,7 +36,7 @@ from .planes import (
     parse_font_family,
     parse_font_style,
 )
-from .source_selection import ordered_fonts
+from .source_selection import ordered_fonts, source_family
 from .unicode_utils import (
     CJK_RELATED_RANGES,
     EMOJI_RANGES,
@@ -406,7 +407,11 @@ def selected_codepoints_for_category(
     selected: dict[int, FontInfo] = {}
     for info in ordered_fonts(category, fonts, family, style):
         for cp in info.codepoints:
-            if codepoint_in_category(category, cp) and cp not in selected:
+            if (
+                codepoint_in_category(category, cp)
+                and cp not in selected
+                and is_selectable_family_codepoint(info, cp, family)
+            ):
                 selected[cp] = info
     return [SelectedCodepoint(cp, selected[cp]) for cp in sorted(selected)]
 
@@ -419,11 +424,19 @@ def selected_upper_codepoints(
     selected: dict[int, FontInfo] = {}
     for info in ordered_fonts("upper1", fonts, family, style):
         for cp in info.codepoints:
-            if 0x10000 <= cp <= PLANE_1_END and cp not in selected:
+            if (
+                0x10000 <= cp <= PLANE_1_END
+                and cp not in selected
+                and is_selectable_family_codepoint(info, cp, family)
+            ):
                 selected[cp] = info
     for info in ordered_fonts("upper2", fonts, family, style):
         for cp in info.codepoints:
-            if cp > PLANE_1_END and cp not in selected:
+            if (
+                cp > PLANE_1_END
+                and cp not in selected
+                and is_selectable_family_codepoint(info, cp, family)
+            ):
                 selected[cp] = info
     return [SelectedCodepoint(cp, selected[cp]) for cp in sorted(selected)]
 
@@ -442,6 +455,24 @@ def selected_output_codepoints(
     )
 
 
+def report_mono_sources(fonts: list[FontInfo], style: FontStyle) -> None:
+    sources = sorted(
+        (font for font in fonts if source_family(font.path) == "mono"),
+        key=lambda font: str(font.path).lower(),
+    )
+    rejected = sum(
+        len(font.codepoints - mono_width_eligible_codepoints(str(font.path)))
+        for font in sources
+    )
+    names = ", ".join(font.path.name for font in sources)
+    print(
+        f"style {style}: mono source fonts={len(sources)}, "
+        f"width-rejected codepoints={rejected}"
+    )
+    if names:
+        print(f"style {style}: mono sources: {names}")
+
+
 def target_mono_width(codepoint: int | None) -> int:
     if codepoint is None:
         return DEFAULT_MONO_HALF_WIDTH
@@ -451,6 +482,31 @@ def target_mono_width(codepoint: int | None) -> int:
     if in_ranges(codepoint, CJK_RELATED_RANGES) or in_ranges(codepoint, EMOJI_RANGES):
         return DEFAULT_MONO_FULL_WIDTH
     return DEFAULT_MONO_HALF_WIDTH
+
+
+@cache
+def mono_width_eligible_codepoints(source: str) -> frozenset[int]:
+    font = TTFont(source, lazy=True, fontNumber=0)
+    try:
+        if "hmtx" not in font:
+            return frozenset()
+        cmap = font.getBestCmap() or {}
+        hmtx = cast(HmtxTable, font["hmtx"])
+        return frozenset(
+            cp
+            for cp, glyph_name in cmap.items()
+            if hmtx.metrics.get(glyph_name, (-1, 0))[0] == target_mono_width(cp)
+        )
+    finally:
+        font.close()
+
+
+def is_selectable_family_codepoint(
+    info: FontInfo, codepoint: int, family: FontFamily
+) -> bool:
+    if family != "mono":
+        return True
+    return codepoint in mono_width_eligible_codepoints(str(info.path))
 
 
 def _glyph_bounds(glyph: Glyph) -> tuple[int, int] | None:
@@ -1156,7 +1212,7 @@ def merge_category(
         output_name_for(family, category),
         selected,
         output_root,
-        family == "mono",
+        False,
         codepoint_filter,
         style,
         preserve_source_metadata,
@@ -1379,6 +1435,8 @@ def is_visible_report_codepoint(
     codepoint: int, category: str, include_marks: bool
 ) -> bool:
     if category in {"Cc", "Cf", "Cs", "Co", "Cn"}:
+        return False
+    if category.startswith("Z") or chr(codepoint).isspace():
         return False
     if not include_marks and category.startswith("M"):
         return False
@@ -1779,7 +1837,7 @@ def try_merge_combined_family_output(
             output_name_for(family, "bmp"),
             selected,
             output_root,
-            family == "mono",
+            False,
             codepoint_filter,
             style,
             preserve_metadata,
@@ -1813,6 +1871,8 @@ def merge_family_outputs(
     preserve_source_metadata: bool = False,
 ) -> None:
     remove_family_merge_outputs(output_root, family)
+    if family == "mono":
+        report_mono_sources(fonts, style)
     if family == "extra":
         merge_extra(
             fonts,
@@ -1842,7 +1902,7 @@ def merge_family_outputs(
         split_output_names(family),
         combined,
         output_root,
-        family == "mono",
+        False,
         codepoint_filter,
         style,
         preserve_source_metadata,
@@ -1869,7 +1929,7 @@ def try_merge_upper_output(
             output_name_for(family, "upper"),
             selected,
             output_root,
-            family == "mono",
+            False,
             codepoint_filter,
             style,
             preserve_metadata,
@@ -1908,7 +1968,7 @@ def merge_upper_bucket_outputs(
             numbered_names,
             selected,
             output_root,
-            family == "mono",
+            False,
             codepoint_filter,
             style,
             preserve_source_metadata,
@@ -1930,7 +1990,7 @@ def merge_upper_bucket_outputs(
             numbered_names[index - 1],
             bucket,
             output_root,
-            family == "mono",
+            False,
             codepoint_filter,
             style,
         )

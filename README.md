@@ -24,7 +24,7 @@ Font sources are routed by explicit family signals in their path or file name:
 
 - `sans` uses sources that clearly identify themselves as sans, such as Noto Sans or Sans CJK sources.
 - `serif` uses sources that clearly identify themselves as serif (including the legacy `serief` spelling).
-- `mono` uses mono sources first, then non-serif sources with normalized advance widths.
+- `mono` uses only mono-classified sources and keeps source glyphs only when their original advance widths already match the mono metrics.
 - `sans_extra` uses neutral and serif-selected sources for codepoints missing from `sans`.
 - `serif_extra` uses neutral and sans-selected sources for codepoints missing from `serif`.
 
@@ -47,8 +47,10 @@ to disappear silently. If you need a complete final fallback prompt font that
 identifies Unicode blocks or special codepoint classes, see the
 [Unicode Last Resort](https://github.com/unicode-org/last-resort-font) project.
 
-The `mono` family uses normalized advance widths that match the current Noto
-mono sources: half-width 600 and full-width 1000.
+The `mono` family accepts source glyphs only when their original advance widths
+already match the current Noto mono metrics: half-width characters use 600 units
+and CJK/fullwidth/emoji characters use 1000 units. It does not reshape or force
+other widths into monospace metrics.
 
 Generated fonts are stripped of layout and hinting tables before writing.
 Unencoded orphan glyphs are pruned, while placeholders such as `.notdef` and
@@ -71,8 +73,8 @@ Output structure:
 | `fonts/merged/<style>/uninoto_serif_extra.ttf` | Serif extra fallback | Contains all serif extra codepoints when they fit |
 | `fonts/merged/<style>/uninoto_serif_extra<N>.ttf` | Serif extra bucket N | Written as needed when serif extra exceeds the glyph limit |
 
-Coverage as of the 2026-06-17 merge against Unicode 17 visible codepoints
-(159,631 total):
+Coverage as of the 2026-06-17 merge against Unicode 17 visible non-control,
+non-whitespace codepoints (159,612 total):
 
 The `Sans + extra` and `Serif + extra` columns are the effective fallback-chain
 coverage. The bare `Sans base` and `Serif base` columns show only clearly
@@ -80,11 +82,11 @@ classified base family sources, excluding directional `extra` coverage.
 
 | Style | Sans + extra | Sans base | Serif + extra | Serif base | Mono |
 |-------|-------------|------|--------------|-------|------|
-| `full` | 159,523 (99.932%) | 143,885 (90.138%) | 159,525 (99.934%) | 58,469 (36.627%) | 159,430 (99.874%) |
-| `regular` | 96,293 (60.323%) | 70,855 (44.388%) | 96,293 (60.323%) | 58,469 (36.627%) | 96,029 (60.157%) |
-| `bold` | 55,727 (34.910%) | 54,588 (34.197%) | 55,727 (34.910%) | 50,494 (31.630%) | 55,308 (34.647%) |
-| `italic` | 3,164 (1.982%) | 3,086 (1.933%) | 3,164 (1.982%) | 3,000 (1.879%) | 3,103 (1.944%) |
-| `bolditalic` | 3,125 (1.958%) | 3,047 (1.909%) | 3,125 (1.958%) | 3,000 (1.879%) | 3,064 (1.919%) |
+| `full` | 159,522 (99.944%) | 143,884 (90.146%) | 159,524 (99.945%) | 58,469 (36.632%) | 35,119 (22.003%) |
+| `regular` | 96,290 (60.328%) | 70,854 (44.391%) | 96,292 (60.329%) | 58,469 (36.632%) | 35,114 (22.000%) |
+| `bold` | 55,727 (34.914%) | 54,588 (34.200%) | 55,727 (34.914%) | 50,494 (31.635%) | 35,118 (22.002%) |
+| `italic` | 3,164 (1.982%) | 3,086 (1.933%) | 3,164 (1.982%) | 3,000 (1.880%) | 26 (0.016%) |
+| `bolditalic` | 3,125 (1.958%) | 3,047 (1.909%) | 3,125 (1.958%) | 3,000 (1.880%) | 26 (0.016%) |
 
 ## Font sources
 

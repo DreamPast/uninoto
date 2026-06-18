@@ -50,6 +50,15 @@ def _is_babelstone_static_ttf(basename: str) -> bool:
     return not any(token in basename for token in blocked)
 
 
+def _is_cascadia_static_ttf(basename: str) -> bool:
+    if not basename.endswith(".ttf"):
+        return False
+    if not (basename.startswith("cascadiacode") or basename.startswith("cascadiamono")):
+        return False
+    blocked = ("nf", "pl")
+    return not any(token in basename.removeprefix("cascadia") for token in blocked)
+
+
 def is_variable_font(path: Path) -> bool:
     normalized = _norm(path)
     basename = path.name.lower()
@@ -85,8 +94,9 @@ def is_static_source_font(path: Path) -> bool:
             )
         if basename in {"hanaminb.otf", "hanaminc.otf"}:
             return True
+        if _is_cascadia_static_ttf(basename):
+            return True
         return _is_babelstone_static_ttf(basename) or basename in {
-            "cascadiacode-regular.ttf",
             "hanaminb.ttf",
             "hanaminc.ttf",
             "jigmo.ttf",

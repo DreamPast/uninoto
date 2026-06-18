@@ -128,7 +128,7 @@ def source_family(path: Path) -> str:
     if (
         "notosansmono" in normalized
         or "mono" in basename
-        or basename == "cascadiacode-regular.ttf"
+        or basename.startswith("cascadiacode")
     ):
         return "mono"
     if "notosans" in normalized or "sanscjk" in normalized or "sans" in basename:
@@ -148,13 +148,7 @@ def requested_family_rank(path: Path, family: FontFamily) -> int:
     if family == "extra":
         return 0 if source == "neutral" else 2
     if family == "mono":
-        if source == "mono":
-            return 0
-        if source == "sans":
-            return 1
-        if source == "neutral":
-            return 2
-        return 99
+        return 0 if source == "mono" else 99
     if source == family:
         return 0
     if source == "neutral":
@@ -165,7 +159,7 @@ def requested_family_rank(path: Path, family: FontFamily) -> int:
 def source_family_eligible(path: Path, family: FontFamily) -> bool:
     source = source_family(path)
     if family == "mono":
-        return source != "serif"
+        return source == "mono"
     if family == "extra":
         return source == "neutral"
     return source == family
